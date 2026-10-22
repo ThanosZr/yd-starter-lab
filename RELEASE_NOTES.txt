@@ -1,0 +1,3 @@
+YD LAB 3.0 — PUBLIC
+React offline editor, topology engine, motor equivalent Thevenin model, waveform display, 0–100% load, star lead removal, thermal positions, built-in user guide.
+NO QUESTION DATA INCLUDED.

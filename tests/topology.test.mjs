@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {defaultWires,analyzeTopology,auditBoth,replaceWireEndpoint,sampleBadWires} from '../src/engine/topology.js';
+test('standard network healthy in Y and delta',()=>{const a=auditBoth(defaultWires());assert.equal(a.ready,true,JSON.stringify({star:a.star.warnings,delta:a.delta.warnings}));});
+test('230/400 winding vs 400/400 winding',()=>{const s=analyzeTopology(defaultWires(),{mode:'star',vl:400,z:20}),d=analyzeTopology(defaultWires(),{mode:'delta',vl:400,z:20});assert.ok(Math.abs(s.windingVoltage-400/Math.sqrt(3))<.001);assert.ok(Math.abs(d.windingVoltage-400)<.001);assert.ok(Math.abs(d.lineCurrent/s.lineCurrent-3)<.001);});
+test('protection positions are in line vs in winding',()=>{const l=analyzeTopology(defaultWires('line'),{mode:'delta',thermal:'line'}),w=analyzeTopology(defaultWires('winding'),{mode:'delta',thermal:'winding'});assert.ok(l.healthy);assert.ok(w.healthy);assert.ok(Math.abs(l.thermalSet/w.thermalSet-Math.sqrt(3))<.001);});
+test('wrong delta short is flagged',()=>{const wires=sampleBadWires();const a=auditBoth(wires);assert.equal(a.ready,false);});
+test('missing wire blocks start',()=>{const wires=defaultWires().filter(w=>w.a!=='L2');assert.equal(auditBoth(wires).ready,false);});
+test('moving wire updates graph',()=>{const original=defaultWires();const changed=replaceWireEndpoint(original,original.find(w=>w.a==='K2M.b1').id,'b','M.U2');assert.equal(auditBoth(changed).ready,false);});
