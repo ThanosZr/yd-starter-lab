@@ -1,7 +1,11 @@
+import {ScopeChart} from './oscilloscope.js';
+import {RectifierLab} from './rectifier-ui.js';
+import RECT_QUIZ from './rectifier-quiz.js';
 import {PHASES,STARTS,ENDS,fmt,defaultWires,allTerminals,auditBoth,analyzeTopology,replaceWireEndpoint,makeWire,sampleBadWires} from './engine/topology.js';
 import QUIZ from './quiz.js';
 import {MOTOR_DEFAULTS,motorPoint,ratedLoadTorque,loadTorque,integrateMotor,calculateTrace} from './engine/motor-dynamics.js';
-const HAS_QUIZ = false;
+const HAS_QUIZ = typeof __HAS_QUIZ__==='undefined'?true:__HAS_QUIZ__;
+const HAS_RECT = typeof __HAS_RECT__==='undefined'?true:__HAS_RECT__;
 const h=React.createElement;
 const el=(tag,props,...kids)=>h(tag,props,...kids.flat(Infinity));
 const I=(n,props={})=>el('span',{className:'ico',...props},n);
@@ -33,33 +37,19 @@ function ellipsePath(a,b,wiggles=4){const dx=b.x-a.x,dy=b.y-a.y,n=Math.hypot(dx,
   return result+` L${a.x+dx*end} ${a.y+dy*end} L${a.x+dx*.95} ${a.y+dy*.95}`;
 }
 function downloadText(name,contents,mime='text/plain'){const blob=new Blob([contents],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1200)}
-function svgDownload(name,dom){if(!dom)return;const clone=dom.cloneNode(true);clone.removeAttribute('style');clone.setAttribute('xmlns','http://www.w3.org/2000/svg');clone.setAttribute('width','1200');clone.setAttribute('height','900');const style=document.createElementNS('http://www.w3.org/2000/svg','style');style.textContent=`text {font-family:Inter,system-ui,Arial,sans-serif;fill:#e6f2ff} .canvas-grid{stroke:#26415b;opacity:.28} .wire{fill:none;stroke:#6d849a;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round} .terminal{fill:#0b1a2e;stroke:#69c9df;stroke-width:3} .motor-winding{fill:none;stroke:#c8e3fa;stroke-width:3.3;stroke-linejoin:round;stroke-linecap:round} .netlink{fill:none;stroke-width:4;stroke-linecap:round} .tiny{font-size:13px;fill:#aac2d5} .boxtext{font-weight:700;font-size:18px} .pinlabel{font-size:12px;fill:#e3f1f9} .bodytext{font-size:15px;fill:#bbcede}`;clone.insertBefore(style,clone.firstChild);downloadText(name,`<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`,'image/svg+xml');}
+function svgDownload(name,dom){if(!dom)return;const clone=dom.cloneNode(true);clone.removeAttribute('style');clone.setAttribute('xmlns','http://www.w3.org/2000/svg');const dimensions=(clone.getAttribute('viewBox')||'0 0 1200 900').trim().split(/\s+/);clone.setAttribute('width',dimensions[2]||'1200');clone.setAttribute('height',dimensions[3]||'900');const style=document.createElementNS('http://www.w3.org/2000/svg','style');style.textContent=`text {font-family:Inter,system-ui,Arial,sans-serif;fill:#e6f2ff} .canvas-grid{stroke:#26415b;opacity:.28} .wire{fill:none;stroke:#6d849a;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round} .terminal{fill:#0b1a2e;stroke:#69c9df;stroke-width:3} .motor-winding{fill:none;stroke:#c8e3fa;stroke-width:3.3;stroke-linejoin:round;stroke-linecap:round} .netlink{fill:none;stroke-width:4;stroke-linecap:round} .tiny{font-size:13px;fill:#aac2d5} .boxtext{font-weight:700;font-size:18px} .pinlabel{font-size:12px;fill:#e3f1f9} .bodytext{font-size:15px;fill:#bbcede}`;clone.insertBefore(style,clone.firstChild);downloadText(name,`<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`,'image/svg+xml');}
 function starLeadWires(wires){return wires.filter(w=>/^K3M\.a[123]$/.test(w.a)||/^K3M\.a[123]$/.test(w.b));}
 function starIsDisconnected(wires,thermal){
   const reference=defaultWires(thermal).filter(w=>!starLeadWires([w]).length);
   const expected=new Set(reference.map(keywire)),actual=new Set(wires.map(keywire));
   return starLeadWires(wires).length===0&&reference.every(w=>actual.has(keywire(w)))&&wires.every(w=>expected.has(keywire(w)));
 }
-function chartSvg(series,options={}){
- const width=820,height=280,pad={l:58,r:20,t:18,b:38};
- const x0=pad.l,x1=width-pad.r,y0=pad.t,y1=height-pad.b;
- const data=series.flatMap(l=>l.points.map(p=>p[1])).filter(Number.isFinite);
- const minY=options.minY!==undefined?options.minY:Math.min(0,...data),maxY=options.maxY!==undefined?options.maxY:Math.max(1,...data);
- const ymin=minY===maxY?minY-1:minY,ymax=minY===maxY?maxY+1:maxY;
- const X=x=>x0+(x-options.xMin)/(options.xMax-options.xMin||1)*(x1-x0);
- const Y=y=>y1-(y-ymin)/(ymax-ymin)*(y1-y0);
- const tickStyle={fontSize:11,fill:'#a9becf'};
- return el('svg',{className:'trend-svg',viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':options.title||'Γράφημα'},
-  el('rect',{x:0,y:0,width,height,rx:11,fill:'#0c1a2b'}),
-  ...Array.from({length:5},(_,i)=>{const y=ymin+i*(ymax-ymin)/4;return el('g',{key:'g'+i},el('line',{x1:x0,x2:x1,y1:Y(y),y2:Y(y),stroke:'#2c4a60',strokeDasharray:'3 6'}),el('text',{x:49,y:Y(y)+4,textAnchor:'end',style:tickStyle},Number(y).toFixed(options.digits===0?0:1)));}),
-  ...Array.from({length:5},(_,i)=>{const x=options.xMin+i*(options.xMax-options.xMin)/4;return el('text',{key:'t'+i,x:X(x),y:height-15,textAnchor:'middle',style:tickStyle},Number(x).toFixed(1));}),
-  ...series.map((l,i)=>el('path',{key:l.name||i,d:l.points.filter(p=>Number.isFinite(p[1])).map((p,j)=>`${j?'L':'M'}${X(p[0]).toFixed(2)} ${Y(p[1]).toFixed(2)}`).join(' '),stroke:l.color,fill:'none',strokeWidth:l.width||2.7,strokeLinejoin:'round',strokeLinecap:'round',opacity:l.opacity||1})),
-  el('text',{x:64,y:14,style:tickStyle},options.title||''),el('text',{x:width-24,y:height-15,style:tickStyle,textAnchor:'end'},options.xLabel||'s'));
-}
+function chartSvg(series,options={}){return el(ScopeChart,{series,options:{...options,scopeId:'yd-'+(options.title||'scope').replace(/[^a-zA-Z0-9]/g,'').slice(0,24)}});}
+
 function appState(){let loaded={};try{loaded=JSON.parse(localStorage.getItem('ydlab-v2')||'{}')}catch{}
- return {tab:'workspace',wires:Array.isArray(loaded.wires)?loaded.wires:defaultWires(),thermal:loaded.thermal||'line',strategy:loaded.strategy||'mounted',loadPct:10,loadShape:'constant',params:{...MOTOR_DEFAULTS},history:[],bypassStar:false,live:{torque:0,load:0,current:0,slip:1,rpm:0},preview:'star',run:'OFF',time:0,speed:0,switchAt:0,plate:'400/690',vl:400,z:20,inum:20,delay:4,deadTime:.32,threshold:85,mode:'edit',showTip:true,labels:loaded.labels||{},netLabels:loaded.netLabels||{},layout:loaded.layout||structuredClone(defaultLayout),selectedWire:null,selectedPin:null,pending:null,zoom:{power:1,diagram:1},pan:{power:{x:0,y:0},diagram:{x:0,y:0}},dragPreview:null,alert:'Έτοιμο. Σύρε καλώδιο από έναν ακροδέκτη σε άλλον ή χρησιμοποίησε την καθοδηγούμενη κατασκευή.',quizIndex:0,answers:{},reveal:true,filter:'όλα',guide:0,showNets:true};}
+ return {tab:'workspace',wires:Array.isArray(loaded.wires)?loaded.wires:defaultWires(),thermal:loaded.thermal||'line',strategy:loaded.strategy||'mounted',loadPct:10,loadShape:'constant',params:{...MOTOR_DEFAULTS},history:[],bypassStar:false,live:{torque:0,load:0,current:0,slip:1,rpm:0},preview:'star',run:'OFF',time:0,speed:0,switchAt:0,timeHorizon:60,simRate:1,plate:'400/690',vl:400,z:20,inum:20,delay:4,deadTime:.32,threshold:85,mode:'edit',showTip:true,labels:loaded.labels||{},netLabels:loaded.netLabels||{},layout:loaded.layout||structuredClone(defaultLayout),selectedWire:null,selectedPin:null,pending:null,zoom:{power:1,diagram:1},pan:{power:{x:0,y:0},diagram:{x:0,y:0}},dragPreview:null,alert:'Έτοιμο. Σύρε καλώδιο από έναν ακροδέκτη σε άλλον ή χρησιμοποίησε την καθοδηγούμενη κατασκευή.',quizIndex:0,answers:{},reveal:true,filter:'όλα',guide:0,showNets:true};}
 class App extends React.Component {
- constructor(p){super(p);this.state=appState();this.pointer=null;this.lastTick=performance.now();this.svgRefs={};this.frameRef=null;}
+ constructor(p){super(p);this.state=appState();this.pointer=null;this.lastTick=performance.now();this.svgRefs={};this.frameRef=null;this.canvasScroll={};this.predictionCache=null;}
  componentDidMount(){this.timer=setInterval(()=>this.tick(),95);window.addEventListener('keydown',this.onGlobalKey);}
  componentWillUnmount(){clearInterval(this.timer);window.removeEventListener('keydown',this.onGlobalKey)}
  onGlobalKey=(e)=>{if(e.key==='Escape')this.setState({pending:null,selectedWire:null,selectedPin:null,dragPreview:null});if((e.key==='Delete'||e.key==='Backspace')&&document.activeElement?.tagName!=='INPUT'&&document.activeElement?.tagName!=='TEXTAREA'&&document.activeElement?.tagName!=='SELECT'){this.removeSelected();}}
@@ -85,7 +75,7 @@ class App extends React.Component {
  stop=()=>this.patch({run:'OFF',bypassStar:false,alert:'STOP: το κύκλωμα ισχύος ανοίγει. Διατηρείται το ιστορικό κυματομορφών.'});
  trip=()=>this.patch({run:'TRIP',bypassStar:false,alert:'F3: θερμική απόζευξη (χειροκίνητη δοκιμή· δεν υλοποιείται καμπύλη θερμικής προστασίας).'});
  tick=()=>{
-   const t=performance.now(),dt=Math.min((t-this.lastTick)/1000,.2);this.lastTick=t;const s=this.state;
+   const t=performance.now(),dt=Math.min((t-this.lastTick)/1000,.2)*this.state.simRate;this.lastTick=t;const s=this.state;
    if(!['STAR','DEAD','DELTA'].includes(s.run))return;
    const runForMotor=s.bypassStar&&s.run==='STAR'?'DEAD':s.run;
    const m=integrateMotor(s.speed,dt,runForMotor,s.loadPct,s.vl,s.params,s.loadShape);
@@ -97,8 +87,17 @@ class App extends React.Component {
      run='DELTA';preview='delta';alert=s.bypassStar?'K2M κλείνει: πρώτη εφαρμογή τάσης στον κινητήρα ως Δ, υψηλό ρεύμα εκκίνησης (DOL με χρονική καθυστέρηση).':'K2M κλείνει: λειτουργία σε Δ.';
    }
    const point={time,run:s.run,speed,slip:m.slip,torque:m.torque,load:m.load,current:m.current};
-   const history=[...s.history,point].filter((_,i,a)=>i%1===0).slice(-420);
+   const history=[...s.history,point].slice(-Math.max(720,Math.min(7000,Math.ceil(s.timeHorizon*12))));
+   if(time>=s.timeHorizon){run='OFF';alert=`Η προσομοίωση ολοκληρώθηκε στα ${s.timeHorizon} s. Τα δείγματα και η περιβάλλουσα παραμένουν για ανάλυση.`;}
    this.patch({time,speed,run,preview,switchAt,live:m,history,alert});
+ };
+ // Scrollable engineering sheet: its world size follows component positions.
+ canvasExtent=()=>{const L=this.state.layout;let width=1130,height=825;for(const [key,pos] of Object.entries(L)){if(!boxSpec[key])continue;width=Math.max(width,Math.ceil((pos.x+boxSpec[key].w+190)/30)*30);height=Math.max(height,Math.ceil((pos.y+boxSpec[key].h+165)/30)*30);}return{width:Math.min(12000,width),height:Math.min(12000,height)};};
+ getPrediction=()=>{const s=this.state;const key=JSON.stringify([s.timeHorizon,s.params,s.loadPct,s.loadShape,s.vl,s.delay,s.deadTime,s.threshold,s.strategy,s.wires,s.thermal]);if(this.predictionCache?.key===key)return this.predictionCache.data;
+  const removed=starIsDisconnected(s.wires,s.thermal),check=this.audit();if(!check.ready&&!(removed&&check.delta.healthy))return[];
+  let speed=0,run='STAR',switchedAt=0;const pts=[{time:0,run:'OFF',speed:0,current:0,torque:0,load:0}];const step=Math.max(.055,Math.min(.15,s.timeHorizon/1250));
+  for(let t=step;t<=s.timeHorizon+step/2;t+=step){const dt=Math.min(step,s.timeHorizon-(t-step));if(dt<=0)break;const m=integrateMotor(speed,dt,removed&&run==='STAR'?'DEAD':run,s.loadPct,s.vl,s.params,s.loadShape);speed=m.speed;pts.push({time:Math.min(t,s.timeHorizon),run,current:m.current,torque:m.torque,load:m.load,speed});if(run==='STAR'&&(s.strategy==='speed'?speed*100>=s.threshold:t>=s.delay)){run='DEAD';switchedAt=t;}else if(run==='DEAD'&&t-switchedAt>=s.deadTime)run='DELTA';}
+  this.predictionCache={key,data:pts};return pts;
  };
  // Shared canvas interaction engine. All edits are performed against the same wire graph.
  coords=(scope,e)=>{const svg=this.svgRefs[scope];if(!svg)return{x:0,y:0};
@@ -111,6 +110,7 @@ class App extends React.Component {
    const first=e.touches[0],second=e.touches[1];this.touchGesture={scope,basePan:{...this.state.pan[scope]},x:first.clientX,y:first.clientY,z:this.state.zoom[scope],dist:second?Math.hypot(first.clientX-second.clientX,first.clientY-second.clientY):0};};
  touchCanvasMove=(scope,e)=>{const t=this.touchGesture;if(!t||t.scope!==scope)return;e.preventDefault();
    if(e.touches.length>1&&t.dist){const a=e.touches[0],b=e.touches[1];this.setZoom(scope,t.z*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/t.dist);return;}
+   if(scope==='power'){const viewport=this.canvasScroll.power,first=e.touches[0];if(viewport&&first){viewport.scrollLeft+=(t.x-first.clientX);viewport.scrollTop+=(t.y-first.clientY);t.x=first.clientX;t.y=first.clientY;}return;}
    const first=e.touches[0],svg=this.svgRefs[scope],r=svg?.getBoundingClientRect();if(!first||!r)return;
    const width=scope==='power'?1030:900,height=790;
    this.patch({pan:{...this.state.pan,[scope]:{x:t.basePan.x-(first.clientX-t.x)/r.width*width/this.state.zoom[scope],y:t.basePan.y-(first.clientY-t.y)/r.height*height/this.state.zoom[scope]}}});};
@@ -136,10 +136,11 @@ class App extends React.Component {
  };
  beginWireEndpoint=(e,id,end,scope)=>{e.stopPropagation();e.preventDefault();this.pointer={type:'reroute',id,end,scope,moved:false,start:e.clientX,sy:e.clientY};this.patch({selectedWire:id,pending:null});};
  beginComponent=(e,name,scope)=>{if(scope!=='power')return;e.stopPropagation();const pos=this.coords(scope,e);this.pointer={type:'component',name,scope,offset:{x:pos.x-this.state.layout[name].x,y:pos.y-this.state.layout[name].y}};};
- canvasDown=(scope,e)=>{if(e.button!==0)return;const xy=this.coords(scope,e);this.pointer={type:'pan',scope,xy,old:{...this.state.pan[scope]}};};
+ canvasDown=(scope,e)=>{if(e.button!==0)return;if(scope==='power'){const box=this.canvasScroll.power;if(box){this.pointer={type:'scroll',scope,startX:e.clientX,startY:e.clientY,left:box.scrollLeft,top:box.scrollTop};return;}}const xy=this.coords(scope,e);this.pointer={type:'pan',scope,xy,old:{...this.state.pan[scope]}};};
  canvasMove=(scope,e)=>{if(!this.pointer||this.pointer.scope!==scope)return;const p=this.pointer;
+  if(p.type==='scroll'){const box=this.canvasScroll.power;if(box){box.scrollLeft=p.left-(e.clientX-p.startX);box.scrollTop=p.top-(e.clientY-p.startY);}return;}
   if(p.type==='pan'){const pt=this.coords(scope,e),pan={...this.state.pan,[scope]:{x:p.old.x-(pt.x-p.xy.x),y:p.old.y-(pt.y-p.xy.y)}};this.patch({pan});}
-  else if(p.type==='component'){const pt=this.coords(scope,e),layout={...this.state.layout,[p.name]:{x:Math.max(10,Math.min(980,pt.x-p.offset.x)),y:Math.max(40,Math.min(660,pt.y-p.offset.y))}};this.patch({layout});}
+  else if(p.type==='component'){const pt=this.coords(scope,e),layout={...this.state.layout,[p.name]:{x:Math.max(10,Math.min(11600,pt.x-p.offset.x)),y:Math.max(35,Math.min(11600,pt.y-p.offset.y))}};this.patch({layout});const viewport=this.canvasScroll.power;if(viewport){const r=viewport.getBoundingClientRect();if(e.clientX>r.right-28)viewport.scrollLeft+=18;if(e.clientX<r.left+28)viewport.scrollLeft-=18;if(e.clientY>r.bottom-28)viewport.scrollTop+=18;if(e.clientY<r.top+28)viewport.scrollTop-=18;}}
   else if(p.type==='wire'||p.type==='reroute'){if(Math.hypot(e.clientX-p.start,e.clientY-p.sy)>3)p.moved=true;this.patch({dragPreview:{scope,from:p.source||null,xy:this.coords(scope,e),id:p.id,end:p.end}});}
  };
  canvasUp=(scope,e)=>{const p=this.pointer;if(!p||p.scope!==scope)return;this.pointer=null;
@@ -154,7 +155,7 @@ class App extends React.Component {
  suggested=()=>defaultWires(this.state.thermal).find(w=>!this.state.wires.some(x=>keywire(x)===keywire(w)));
  suggestAdd=()=>{const next=this.suggested();if(!next){this.patch({alert:'Όλοι οι 18 αγωγοί του προτύπου υπάρχουν.'});return;}
   this.changeWires([...this.state.wires,{...next}],`Πρόταση συνδεσμολογίας: ${idToReadable(next.a)} → ${idToReadable(next.b)}.`);};
- generateReport=()=>{const a=this.audit();downloadText('yd-lab-workspace.json',JSON.stringify({name:'YD LAB v2',saved:new Date().toISOString(),wires:this.state.wires,thermal:this.state.thermal,labels:this.state.labels,layout:this.state.layout,star:{faults:a.star.faults,warnings:a.star.warnings},delta:{faults:a.delta.faults,warnings:a.delta.warnings}},null,2),'application/json')};
+ generateReport=()=>{const a=this.audit();downloadText('yd-lab-workspace.json',JSON.stringify({name:'YD LAB v4.1',saved:new Date().toISOString(),wires:this.state.wires,thermal:this.state.thermal,labels:this.state.labels,layout:this.state.layout,star:{faults:a.star.faults,warnings:a.star.warnings},delta:{faults:a.delta.faults,warnings:a.delta.warnings}},null,2),'application/json')};
  loadReport=e=>{const file=e.target.files?.[0];if(!file)return;const fr=new FileReader();fr.onload=()=>{try{const a=JSON.parse(fr.result);if(!Array.isArray(a.wires))throw Error('Άκυρο αρχείο');this.patch({wires:a.wires,thermal:a.thermal||'line',labels:a.labels||{},layout:a.layout||structuredClone(defaultLayout),run:'OFF',alert:'Το αποθηκευμένο κύκλωμα εισήχθη.'},true);}catch(err){this.patch({alert:'Σφάλμα εισαγωγής: '+err.message});}};fr.readAsText(file);};
  navTab=(id,icon,label)=>el('button',{key:id,className:'nav-item '+(this.state.tab===id?'active':''),onClick:()=>this.patch({tab:id})},el('span',{className:'nav-icon'},icon),el('span',null,label));
  badge=(text,variant='')=>el('span',{className:'badge '+variant},text);
@@ -168,10 +169,10 @@ class App extends React.Component {
       el('div',{className:'top-actions'},this.button('↶ Επαναφορά',()=>{if(confirm('Επαναφορά πρότυπου κυκλώματος;'))this.changeWires(defaultWires(s.thermal),'Επανήλθε η έγκυρη πρότυπη συνδεσμολογία.')},'quiet'),this.button('↓ PROJECT',this.generateReport,'action'))),
     el('div',{className:'body-grid'},
       el('aside',{className:'sidebar'},
-       el('div',{className:'navgroup'},el('div',{className:'side-heading'},'WORKSPACE'),this.navTab('workspace','◈','Schematic editor'),this.navTab('control','⟟','Ρελέ & αυτοματισμός'),this.navTab('dynamics','∿','Κυματομορφές & ροπή'),HAS_QUIZ?this.navTab('quiz','▤','Εξάσκηση · 36'):null,this.navTab('help','ⓘ','Οδηγός')),
-       el('div',{className:'sidebar-bottom'},el('div',{className:'help-info'},'ΜΕΛΕΤΗ ΧΩΡΙΣ ΤΑΣΗ',el('p',null,'Οι ηλεκτρικές συνδέσεις προσομοιώνονται. Δεν εκτελείται χειρισμός πραγματικού εξοπλισμού.')),el('div',{className:'build-stamp'},'REACT / SVG ENGINE',el('span',null,'v3.0')))),
+       el('div',{className:'navgroup'},el('div',{className:'side-heading'},'WORKSPACE'),this.navTab('workspace','◈','Schematic editor'),this.navTab('control','⟟','Ρελέ & αυτοματισμός'),this.navTab('dynamics','∿','Κυματομορφές & ροπή'),HAS_RECT?this.navTab('rectifier','◭','Ανορθωτικές διατάξεις'):null,HAS_QUIZ?this.navTab('quiz','▤','Εξάσκηση · 36'):null,this.navTab('help','ⓘ','Οδηγός')),
+       el('div',{className:'sidebar-bottom'},el('div',{className:'help-info'},'ΜΕΛΕΤΗ ΧΩΡΙΣ ΤΑΣΗ',el('p',null,'Οι ηλεκτρικές συνδέσεις προσομοιώνονται. Δεν εκτελείται χειρισμός πραγματικού εξοπλισμού.')),el('div',{className:'build-stamp'},'REACT / SVG ENGINE',el('span',null,'v4.1')))),
       el('main',{className:'main'},
-       s.tab==='workspace'?this.renderWorkspace(both,current,mode):s.tab==='control'?this.renderControl():s.tab==='dynamics'?this.renderDynamics():s.tab==='quiz'&&HAS_QUIZ?this.renderQuiz():this.renderHelp(),
+       s.tab==='workspace'?this.renderWorkspace(both,current,mode):s.tab==='control'?this.renderControl():s.tab==='dynamics'?this.renderDynamics():s.tab==='rectifier'&&HAS_RECT?el(RectifierLab,{questions:HAS_QUIZ?RECT_QUIZ:[]}):s.tab==='quiz'&&HAS_QUIZ?this.renderQuiz():this.renderHelp(),
        el('footer',{className:'footer'},'YD LAB · Η τοπολογία ελέγχεται από γράφο. Η δυναμική κινητήρα χρησιμοποιεί εκπαιδευτικό ισοδύναμο μόνιμης κατάστασης και προσεγγιστική ολοκλήρωση κίνησης.',el('span',null,'offline · GitHub Pages ready')))
     ));}
  renderWorkspace(both,current,mode){const s=this.state;const next=this.suggested();const netRows=current.groups.filter(g=>g.members.some(t=>t.startsWith('M.')||PHASES.includes(t))).slice(0,12).map(g=>el('div',{key:g.id,className:'net-row'},el('span',{className:'net-indicator',style:{background:g.phases[0]?colorPhase[PHASES.indexOf(g.phases[0])]:'#8da6bd'}}),el('strong',null,s.netLabels[netKey(g)]||g.phases.join('/')||g.id),el('span',null,g.members.filter(t=>t.startsWith('M.')||PHASES.includes(t)).map(t=>s.labels[t]||t).join(' · '))));
@@ -184,8 +185,8 @@ class App extends React.Component {
      el('div',{className:'two-views'},
        el('section',{className:'canvas-panel power-pane'},
          this.canvasHeader('01 / CIRCUIT', 'Κύκλωμα ισχύος','Σύρε τα άκρα των αγωγών ή τα εξαρτήματα','power'),
-         this.powerSvg(current,mode),
-         el('div',{className:'canvas-bottom'},el('span',null,'● Πάτησε έναν ακροδέκτη και μετά έναν δεύτερο ή σύρε μεταξύ τους'),el('span',{className:'shortcut'},'WHEEL  ZOOM · DRAG  PAN'))),
+         el('div',{className:'canvas-viewport power-scroll',ref:n=>this.canvasScroll.power=n},this.powerSvg(current,mode)),
+         el('div',{className:'canvas-bottom'},el('span',null,'● Πάτησε έναν ακροδέκτη και μετά έναν δεύτερο ή σύρε μεταξύ τους'),el('span',{className:'shortcut'},'SCROLLBARS  X/Y · DRAG  PAN · WHEEL  ZOOM'))),
        el('section',{className:'canvas-panel diagram-pane'},
          this.canvasHeader('02 / EQUIVALENT', 'Συνδέσεις τυλιγμάτων','Καλωδίωσε τις φάσεις, τα τυλίγματα και τους επαφείς','diagram'),
          this.diagramSvg(current),
@@ -227,7 +228,7 @@ class App extends React.Component {
   }
   return el('p',{className:'muted'},'Επίλεξε καλώδιο ή ακροδέκτη στο σχέδιο. Μπορείς να αλλάξεις τα άκρα του από εδώ ή σύροντάς τα στο SVG.');
  }
- powerSvg(result,mode){const s=this.state,L=s.layout;const v={w:1030/s.zoom.power,h:790/s.zoom.power,x:s.pan.power.x,y:s.pan.power.y};const stateClosed={K1M:s.run==='STAR'||s.run==='DEAD'||s.run==='DELTA'||(s.run==='OFF'&&mode==='preview'),K2M:(s.run==='DELTA'||(s.run==='OFF'&&s.preview==='delta')),K3M:(s.run==='STAR'||(s.run==='OFF'&&s.preview==='star')),F3:s.run!=='TRIP'};
+ powerSvg(result,mode){const s=this.state,L=s.layout,extent=this.canvasExtent();const v={w:extent.width,h:extent.height,x:0,y:0};const stateClosed={K1M:s.run==='STAR'||s.run==='DEAD'||s.run==='DELTA'||(s.run==='OFF'&&mode==='preview'),K2M:(s.run==='DELTA'||(s.run==='OFF'&&s.preview==='delta')),K3M:(s.run==='STAR'||(s.run==='OFF'&&s.preview==='star')),F3:s.run!=='TRIP'};
   const activePhase=(t)=>{const r=result.root(t);for(let i=0;i<3;i++)if(r===result.root(PHASES[i]))return colorPhase[i];return null;};
   const portsFor=(name)=>name==='SOURCE'?PHASES:name==='M'?[...STARTS,...ENDS].map(t=>'M.'+t):['a','b'].flatMap(side=>[1,2,3].map(i=>`${name}.${side}${i}`));
   const terminal=(t)=>{const p=terminalPosition(t,L);if(!p)return null;const color=activePhase(t);const show=s.selectedPin===t||s.pending===t;let align=t.startsWith('M.')?(STARTS.some(x=>t==='M.'+x)?-1:1):/\.a/.test(t)?-1:1;
@@ -251,16 +252,16 @@ class App extends React.Component {
       selected?[el('circle',{key:'a',cx:p.x,cy:p.y,r:10,className:'wire-end',onMouseDown:e=>this.beginWireEndpoint(e,w.id,'a','power')}),el('circle',{key:'b',cx:q.x,cy:q.y,r:10,className:'wire-end',onMouseDown:e=>this.beginWireEndpoint(e,w.id,'b','power')})]:null);
   });
   const wirePreview=s.dragPreview?.scope==='power'&&s.dragPreview.from?el('line',{x1:terminalPosition(s.dragPreview.from,L)?.x,y1:terminalPosition(s.dragPreview.from,L)?.y,x2:s.dragPreview.xy.x,y2:s.dragPreview.xy.y,stroke:'#ffcc7a',strokeDasharray:'7 6',strokeWidth:3}):null;
-  const grid=[];for(let x=0;x<1100;x+=30)grid.push(el('line',{key:'vx'+x,x1:x,x2:x,y1:0,y2:790,className:'canvas-grid'}));for(let y=0;y<790;y+=30)grid.push(el('line',{key:'hy'+y,x1:0,x2:1100,y1:y,y2:y,className:'canvas-grid'}));
-  return el('svg',{ref:n=>this.svgRefs.power=n,xmlns:'http://www.w3.org/2000/svg',className:'editor-svg',viewBox:`${v.x} ${v.y} ${v.w} ${v.h}`,onWheel:e=>this.canvasWheel('power',e),onTouchStart:e=>this.touchCanvasStart('power',e),onTouchMove:e=>this.touchCanvasMove('power',e),onTouchEnd:()=>{this.touchGesture=null;},onMouseDown:e=>this.canvasDown('power',e),onMouseMove:e=>this.canvasMove('power',e),onMouseUp:e=>this.canvasUp('power',e),onMouseLeave:e=>this.canvasUp('power',e)},
-    el('rect',{x:0,y:0,width:1100,height:790,fill:'#101e30'}),el('g',null,...grid),
+  const grid=[];for(let x=0;x<extent.width;x+=30)grid.push(el('line',{key:'vx'+x,x1:x,x2:x,y1:0,y2:extent.height,className:'canvas-grid'}));for(let y=0;y<extent.height;y+=30)grid.push(el('line',{key:'hy'+y,x1:0,x2:extent.width,y1:y,y2:y,className:'canvas-grid'}));
+  return el('svg',{ref:n=>this.svgRefs.power=n,xmlns:'http://www.w3.org/2000/svg',className:'editor-svg power-svg-sheet',style:{width:(v.w*s.zoom.power)+'px',height:(v.h*s.zoom.power)+'px',maxWidth:'none',maxHeight:'none',flexShrink:0},width:v.w*s.zoom.power,height:v.h*s.zoom.power,viewBox:`${v.x} ${v.y} ${v.w} ${v.h}`,onWheel:e=>this.canvasWheel('power',e),onTouchStart:e=>this.touchCanvasStart('power',e),onTouchMove:e=>this.touchCanvasMove('power',e),onTouchEnd:()=>{this.touchGesture=null;},onMouseDown:e=>this.canvasDown('power',e),onMouseMove:e=>this.canvasMove('power',e),onMouseUp:e=>this.canvasUp('power',e),onMouseLeave:e=>this.canvasUp('power',e)},
+    el('rect',{x:0,y:0,width:extent.width,height:extent.height,fill:'#101e30'}),el('g',null,...grid),
     el('text',{x:38,y:48,className:'scheme-heading'},'POWER CIRCUIT  •  3 × 400 V'),
     el('text',{x:38,y:73,className:'scheme-sub'},`K1M → F3 → MOTOR   /   K2M Δ   /   K3M Y     [${mode==='dead'?'BREAK BEFORE MAKE':mode==='preview'?'PREVIEW':mode.toUpperCase()}]`),
     el('g',null,...wires),el('g',null,...Object.keys(boxSpec).map(box)),
     // visible star contactor's factory-internal common bar
     el('path',{d:`M${L.K3M.x+boxSpec.K3M.w-13} ${L.K3M.y+68} V${L.K3M.y+194}`,stroke:'#6ee3c3',strokeWidth:5,strokeDasharray:stateClosed.K3M?'':'7 5',opacity:stateClosed.K3M?1:.45,fill:'none'}),el('text',{x:L.K3M.x+boxSpec.K3M.w-22,y:L.K3M.y+228,textAnchor:'end',className:'tiny'},stateClosed.K3M?'U2 = V2 = W2':'εσωτερική μπάρα Υ'),
     ...s.wires.filter(w=>w.id===s.selectedWire).flatMap(w=>['a','b'].map(side=>{const port=terminalPosition(w[side],L);return port?el('circle',{key:'handle'+side,cx:port.x,cy:port.y,r:16,fill:'transparent',stroke:'#ffdf86',strokeWidth:3,cursor:'crosshair',onMouseDown:e=>this.beginWireEndpoint(e,w.id,side,'power')}):null;})),wirePreview,
-    el('text',{x:35,y:750,className:'tiny'},'Σημείωση: Η αναπαράσταση των επαφών στην προβολή Υ/Δ είναι ενδεικτική όταν η εκκίνηση δεν έχει ενεργοποιηθεί.'));
+    el('text',{x:35,y:extent.height-38,className:'tiny'},'Σημείωση: Η αναπαράσταση των επαφών στην προβολή Υ/Δ είναι ενδεικτική όταν η εκκίνηση δεν έχει ενεργοποιηθεί.'));
  }
  diagramSvg(result){
   const s=this.state;const v={w:900/s.zoom.diagram,h:790/s.zoom.diagram,x:s.pan.diagram.x,y:s.pan.diagram.y};
@@ -418,14 +419,27 @@ class App extends React.Component {
   const currentMode=s.run==='STAR'?'star':'delta';
   const simPoint=motorPoint(slip,currentMode,s.vl,p);
   const chartPhase=(s.bypassStar&&s.run==='STAR')?'OFF':s.run;
-  const windowT=Math.max(.16,s.time),wave=calculateTrace(windowT-.12,windowT,.0006,s.speed,chartPhase,s.vl,p);
-  const history=s.history;
-  const historySeries=(key)=>history.length>1?history.map(x=>[x.time,x[key]]):[[0,0],[.1,0]];
-  const maxT=Math.max(3,s.time,s.delay+s.deadTime+1);
+  const history=s.history.length>1?s.history:this.getPrediction();
+  const historySeries=(key)=>history.length>1?history.map(x=>[x.time,x[key]]):[[0,0],[s.timeHorizon,0]];
+  const maxT=s.timeHorizon;
+  const waveformView=(view)=>{const source=history;let ptr=0;const at=(t)=>{while(ptr+1<source.length&&source[ptr+1].time<t)ptr++;const a=source[ptr]||{time:0,speed:0,run:'OFF',current:0},b=source[Math.min(ptr+1,source.length-1)]||a;const k=b.time>a.time?Math.max(0,Math.min(1,(t-a.time)/(b.time-a.time))):0;return{speed:a.speed+(b.speed-a.speed)*k,phase:a.run,current:Math.max(0,a.current+(b.current-a.current)*k)};};
+   const a=Math.max(0,view.x0),b=Math.min(s.timeHorizon,view.x1),span=Math.max(.0005,b-a);if(b<=a)return[];
+   if(span>2.8){const n=Math.min(950,Math.max(220,Math.ceil(span*16)));const positive=[],negative=[],rms=[];for(let j=0;j<=n;j++){const t=a+(b-a)*j/n,x=at(t),v=Math.SQRT2*x.current;positive.push([t,v]);negative.push([t,-v]);rms.push([t,x.current]);}return[{name:'+Peak',color:'#ffb980',points:positive,width:1.9},{name:'−Peak',color:'#65cbe9',points:negative,width:1.9},{name:'I RMS',color:'#b6ddff',points:rms,width:2.6}];}
+   const n=Math.min(6500,Math.max(360,Math.ceil(span*p.f*32))),traces=[[],[],[]];for(let j=0;j<=n;j++){const t=a+(b-a)*j/n,x=at(t),running=x.phase==='STAR'||x.phase==='DELTA';const point=motorPoint(1-x.speed,x.phase==='STAR'?'star':'delta',s.vl,p);const amp=running?Math.SQRT2*x.current:0;for(let ph=0;ph<3;ph++)traces[ph].push([t,amp*Math.sin(2*Math.PI*p.f*t-point.phi-ph*2*Math.PI/3)]);}return traces.map((points,i)=>({name:'L'+(i+1),color:colorPhase[i],points,width:1.65}));
+  };
+  const ampBound=Math.max(1,...history.map(x=>x.current||0))*Math.SQRT2*1.17;
   const tSlip=(mode)=>Array.from({length:201},(_,i)=>{const t=i/200;return [t,motorPoint(Math.max(.0005,t),mode,s.vl,p).torque];});
   const tD=tSlip('delta'),tY=tSlip('star'),tMax=Math.max(...tD.map(x=>x[1]))*1.12;
   const z1={r:p.R1,i:p.X1},critical=p.R2/Math.sqrt(p.R1*p.R1+(p.X1+p.X2)*(p.X1+p.X2));
   const desiredLoad=loadTorque(s.speed*4*Math.PI*p.f/p.poles,s.loadPct,s.vl,p,s.loadShape);
+  // Approximate electrical rotor/stator envelope time constant at current slip;
+  // this is a local equivalent-RL estimate, not an exact switching transient.
+  const tauElectrical=(p.X1+p.X2)/(2*Math.PI*p.f*(p.R1+p.R2/Math.max(.005,slip)));
+  const omegaS=4*Math.PI*p.f/p.poles, ds=.002;
+  const tmid=motorPoint(Math.max(.0005,slip),'delta',s.vl,p).torque;
+  const dTeDomega=(motorPoint(Math.max(.0005,slip-ds),'delta',s.vl,p).torque-motorPoint(Math.min(1,slip+ds),'delta',s.vl,p).torque)/(2*ds*omegaS);
+  const tauMechanical= dTeDomega<0?p.J/Math.abs(dTeDomega-p.viscous):null;
+
   const kv=(name,value,meta)=>el('div',{className:'dyn-kpi'},el('small',null,name),el('strong',null,value),el('span',null,meta));
   const hint=(title,text)=>el('div',{className:'simulation-hint'},el('strong',null,title),el('span',null,text));
   return el('div',{className:'content-page dynamics'},
@@ -438,15 +452,15 @@ class App extends React.Component {
        el('label',null,'Μοντέλο φορτίου',el('select',{value:s.loadShape,onChange:e=>this.patch({loadShape:e.target.value})},el('option',{value:'constant'},'Σταθερή ροπή'),el('option',{value:'fan'},'Ανεμιστήρας ~ n²'))),
        el('label',null,'Χρόνος Υ (s)',el('input',{type:'number',min:.2,max:30,step:.2,value:s.delay,onChange:e=>this.patch({delay:Math.max(.2,Math.min(30,+e.target.value||.2))})})),
        el('label',null,'Κριτήριο μεταγωγής',el('select',{value:s.strategy,onChange:e=>this.patch({strategy:e.target.value,run:'OFF',bypassStar:false},true)},el('option',{value:'mounted'},'Μηχανικό χρονικό K3M'),el('option',{value:'independent'},'Ανεξάρτητο KT1'),el('option',{value:'speed'},'Με βάση την ταχύτητα'))),
-       el('label',null,'Όριο ταχύτητας (%)',el('input',{type:'number',min:40,max:95,value:s.threshold,onChange:e=>this.patch({threshold:Math.max(40,Math.min(95,+e.target.value||85))})}))
+       el('label',null,'Όριο ταχύτητας (%)',el('input',{type:'number',min:40,max:95,value:s.threshold,onChange:e=>this.patch({threshold:Math.max(40,Math.min(95,+e.target.value||85))})})),el('label',null,'Διάρκεια ανάλυσης (s)',el('input',{type:'number',min:5,max:600,step:5,inputMode:'numeric',value:s.timeHorizon,onChange:e=>this.patch({timeHorizon:Math.max(5,Math.min(600,Math.round(Number(e.target.value)||60)))})})),el('label',null,'Ταχύτητα εκτέλεσης',el('select',{value:s.simRate,onChange:e=>this.patch({simRate:+e.target.value})},...[1,2,5,10].map(x=>el('option',{key:x,value:x},x+'×'))))
      ),
      el('div',{className:'dyn-actions'},this.button('✳ AUTO: Κανονικό Υ/Δ',()=>this.autoBuild(),'soft'),this.button('✂ Αφαίρεσε τα 3 καλώδια Υ',()=>this.autoBuild('without-star'),'outline'),this.button('⟟ Δες τα καλώδια',()=>this.patch({tab:'workspace',preview:'star'}),'outline'),this.button('▶ START',this.start,'start',['STAR','DEAD','DELTA'].includes(s.run)),this.button('■ STOP',this.stop,'stop')),
      starRemoved?el('div',{className:'dyn-notice danger'},'ΔΟΚΙΜΗ ΧΩΡΙΣ Υ: ο K3M οπλίζει, όμως τα U2/V2/W2 δεν ενώνονται στην πραγματική καλωδίωση. Η μηχανή μένει ακίνητη μέχρι να οπλίσει ο K2M. Αυτό είναι καθυστερημένη απευθείας εκκίνηση Δ, όχι ομαλή εκκίνηση Υ/Δ.'):el('div',{className:'dyn-notice'},'Ο K3M βραχυκυκλώνει (συνδέει στον ίδιο κόμβο) τα U2, V2, W2 όταν οπλίσει. Ο K2M και ο K3M δεν επιτρέπεται να είναι ταυτόχρονα κλειστοί.'),
-     el('div',{className:'dyn-kpis'},kv('Ταχύτητα',`${(s.speed*syncRpm).toFixed(0)} rpm`,`${(100*s.speed).toFixed(1)}% της σύγχρονης`),kv('Ολίσθηση',`${(slip*100).toFixed(1)}%`,'s = (nₛ−n)/nₛ'),kv('Ηλ/μαγνητική ροπή',`${(model.torque||0).toFixed(1)} N·m`,'Te(s)'),kv('Ροπή φορτίου',`${(model.load||0).toFixed(1)} N·m`,s.loadShape==='fan'?'T ∝ n²':'T ≈ σταθερή'),kv('Ρεύμα γραμμής',`${(model.current||0).toFixed(1)} A`,'RMS · προσεγγιστικό'),kv('Χρόνος',`${s.time.toFixed(1)} s`,'STAR / DEAD / DELTA')),
+     el('div',{className:'dyn-kpis'},kv('Ταχύτητα',`${(s.speed*syncRpm).toFixed(0)} rpm`,`${(100*s.speed).toFixed(1)}% της σύγχρονης`),kv('Ολίσθηση',`${(slip*100).toFixed(1)}%`,'s = (nₛ−n)/nₛ'),kv('Ηλ/μαγνητική ροπή',`${(model.torque||0).toFixed(1)} N·m`,'Te(s)'),kv('Ροπή φορτίου',`${(model.load||0).toFixed(1)} N·m`,s.loadShape==='fan'?'T ∝ n²':'T ≈ σταθερή'),kv('Ρεύμα γραμμής',`${(model.current||0).toFixed(1)} A`,'RMS · προσεγγιστικό'),kv('Χρόνος',`${s.time.toFixed(1)} / ${s.timeHorizon} s`,'STAR / DEAD / DELTA')),
      el('div',{className:'dyn-notice'},s.alert)
    ),
    el('div',{className:'dyn-charts'},
-    el('section',{className:'panel'},el('div',{className:'subhead'},'2 / ΤΡΙΦΑΣΙΚΑ ΡΕΥΜΑΤΑ i(t)'),el('p',{className:'dyn-small'},'Στιγμιαίες ενδεικτικές ημιτονοειδείς τιμές 50 Hz σε παράθυρο 120 ms. Το πλάτος προκύπτει από το στιγμιαίο s, αλλά ΔΕΝ μοντελοποιούνται DC-offset, κορεσμός, υψηλές αρμονικές ή μεταβατική ροή.'),chartSvg([0,1,2].map(i=>({name:'L'+(i+1),color:colorPhase[i],points:wave.map(row=>[row.t,row.phases[i]])})),{title:'iL1 / iL2 / iL3 [A]',xMin:windowT-.12,xMax:windowT,xLabel:'t [s]',digits:0}),el('div',{className:'chart-legend'},...[0,1,2].map(i=>el('span',{style:{color:colorPhase[i]},key:i},`● L${i+1}`)))),
+    el('section',{className:'panel'},el('div',{className:'scope-constants'},el('strong',null,'Εκτίμηση σταθερών χρόνου περιβάλλουσας: '),el('span',null,'τₑ ≈ '+(tauElectrical*1000).toFixed(2)+' ms'),el('span',null,'τₘ,local ≈ '+(tauMechanical?tauMechanical.toFixed(2)+' s':'— (μη ευσταθής περιοχή)')),el('small',null,'Προσεγγίσεις: τₑ=L_eq/R_eq, τₘ από τοπική γραμμικοποίηση ροπής. Όχι μετρούμενες πραγματικές ηλεκτρομαγνητικές σταθερές.')),el('div',{className:'subhead'},'2 / ΤΡΙΦΑΣΙΚΑ ΡΕΥΜΑΤΑ i(t)'),el('p',{className:'dyn-small'},'Προεπιλεγμένο διάστημα 0–60 s (αλλαγή από τις ρυθμίσεις). Σε ευρεία προβολή απεικονίζονται RMS και οι δύο περιβάλλουσες ±√2·Iᵣₘₛ· με X+ εμφανίζονται αυτόματα τα στιγμιαία φασικά ημιτονοειδή. Πρόκειται για ενδεικτικό φασορικό μοντέλο χωρίς DC offset, κορεσμό και ηλεκτρομαγνητική μεταβατική ροή.'),chartSvg([{name:'I RMS',color:'#b6ddff',points:historySeries('current')}],{title:'iL1 / iL2 / iL3 [A] · adaptive oscilloscope',xMin:0,xMax:s.timeHorizon,minY:-ampBound,maxY:ampBound,xLabel:'t [s]',viewSeries:waveformView,digits:0}),el('div',{className:'chart-legend'},...[0,1,2].map(i=>el('span',{style:{color:colorPhase[i]},key:i},`● L${i+1}`)))),
     el('section',{className:'panel'},el('div',{className:'subhead'},'3 / ΕΚΚΙΝΗΣΗ: ΡΕΥΜΑ, ΡΟΠΗ, ΤΑΧΥΤΗΤΑ'),el('p',{className:'dyn-small'},'Κυματομορφές περιβάλλουσας (RMS/μέση ροπή), από την εξίσωση κίνησης J·dω/dt = Te − TL − Bω.'),chartSvg([{name:'I rms',color:'#62c6e9',points:historySeries('current')}],{title:'Ρεύμα γραμμής [A rms]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'Te',color:'#ffb66c',points:historySeries('torque')},{name:'Tload',color:'#e889cb',points:historySeries('load')}],{title:'Ηλεκτρομαγνητική ροπή / ροπή φορτίου [N·m]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'n/nₛ',color:'#72e6bd',points:historySeries('speed').map(([t,z])=>[t,100*z])}],{title:'Στροφές ως % της σύγχρονης',xMin:0,xMax:maxT,minY:0,maxY:100,xLabel:'t [s]',digits:0})),
     el('section',{className:'panel'},el('div',{className:'subhead'},'4 / ΧΑΡΑΚΤΗΡΙΣΤΙΚΗ ΡΟΠΗΣ–ΟΛΙΣΘΗΣΗΣ'),chartSvg([{name:'Δ',color:'#ffbd78',points:tD},{name:'Υ',color:'#72e7c7',points:tY},{name:'T φορτίου',color:'#e18fc9',points:[[0,desiredLoad],[1,desiredLoad]]},{name:'σημείο',color:'#fff3bd',points:[[slip,0],[slip,tMax]]}],{title:'Te (s) και ενδεικτική TL [N·m]',xMin:0,xMax:1,minY:0,maxY:tMax,xLabel:'ολίσθηση s',digits:0}),
       el('div',{className:'chart-legend'},el('span',{style:{color:'#ffbd78'}},'● Δ'),el('span',{style:{color:'#72e7c7'}},'● Υ ≈ TeΔ/3'),el('span',{style:{color:'#e18fc9'}},'● φορτίο'),el('span',{style:{color:'#fff3bd'}},'● τρέχουσα s')),
@@ -549,15 +563,16 @@ class App extends React.Component {
  el('div',{className:'help-grid'},...[
  ['01','Ξεκίνα από πρότυπο ή κενό','Το έτοιμο κύκλωμα περιέχει 18 καλώδια. Με το κενό κύκλωμα μπορείς να το σχεδιάσεις από την αρχή.'],
  ['02','Σύνδεσε ακροδέκτες','Κλικ σε πρώτο και δεύτερο κυκλικό port ή drag μεταξύ ports. Κλικ σε καλώδιο για επιλογή και αλλαγή άκρου. Delete αφαιρεί.'],
- ['03','Zoom και pan','Με τη ροδέλα κάνεις zoom. Με σύρσιμο σε κενό σημείο μετακινείς τον καμβά. Σύρε το σώμα εξαρτήματος για άλλη θέση.'],
+ ['03','Επεκτεινόμενο σχέδιο και scroll','Το κύκλωμα ισχύος αποκτά μεγαλύτερο πλέγμα όταν μετακινείς εξάρτημα προς τα δεξιά ή κάτω. Οι μπάρες κύλισης κινούν τον καμβά και ο τροχός κάνει zoom. Στο κινητό μπορείς να μετακινήσεις τον καμβά με το δάχτυλο.'],
  ['04','Το Υ/Δ προκύπτει από γράφο','Union-find ομαδοποιεί καλώδια και κλειστές επαφές. Τα τυλίγματα είναι πεπερασμένες εμπεδήσεις, όχι βραχυκυκλώματα.'],
  ['05','Αλλαγή από τη μικρή όψη','Σύρε ή σύνδεσε τα K2M.b1–b3 σε U2/V2/W2: αντικαθίσταται αντίστοιχη φυσική ακμή στην αριστερή όψη.'],
  ['06','Συνειδητή ανίχνευση λαθών','Ο engine εντοπίζει γεφυρώσεις φάσεων, παράκαμψη τυλιγμάτων, ελλιπή Υ και λανθασμένους κόμβους Δ. Μπλοκάρει το START.'],
  ['07','Ρελέ και χρονικό','K3M: δύο δικές του βοηθητικές και δύο χρονικές επαφές από μηχανικό πρόσθετο. K4M εκπαιδευτική μνήμη ή ανεξάρτητο KT1 ή κριτήριο ταχύτητας.'],
  ['08','AUTO Υ/Δ','Η Αυτόματη Κατασκευή δημιουργεί τις 18 συνδέσεις. Με το κουμπί Χωρίς κλάδο Υ αφαιρούνται οι 3 αγωγοί προς K3M. Το χρονικό οπλίζει με K3M, αλλά η μηχανή τροφοδοτείται μόνο όταν κλείσει το Δ.'],
  ['09','Θέση F3','F3 στη γραμμή: ρύθμιση Iₙ. F3 εντός βρόχου Δ: περίπου 0,58 Iₙ. Η αλλαγή προτείνει νέο πρότυπο και επανακαλωδιώνει. Απαιτείται πραγματικός έλεγχος προστασιών κατασκευαστή.'],
- ['10','Ροπή και ολίσθηση','Η καρτέλα Κυματομορφές υπολογίζει προσεγγιστικά ρεύμα/ροπή ανά ολίσθηση, προσθέτει φορτίο 0–100% και ολοκληρώνει εξίσωση J·dω/dt = Te − TL − Bω. Ενδέχεται να μη μπορεί να επιταχύνει σε Υ.'],
- ['11','Αποτελέσματα και αρχεία','SVG κάθε όψης και JSON συνδεσμολογίας. '+(HAS_QUIZ?'Η πλήρης έκδοση δίνει και CSV/JSON της εξάσκησης.':'Η δημόσια έκδοση δεν περιλαμβάνει ερωτήσεις.')+' Λειτουργεί τοπικά χωρίς backend.']].map(([number,title,body])=>el('section',{className:'panel help-card',key:number},el('span',{className:'help-number'},number),el('h3',null,title),el('p',null,body)))),
+ ['10','Ροπή, 60 s και adaptive παλμογράφος','Στην καρτέλα Κυματομορφές η προεπιλογή είναι 0–60 s, με ελεύθερο τέλος χρόνου έως 600 s. Με X+ στο σήμα i(t) περνάς από το RMS/περιβάλλουσα στις λεπτομερείς τρεις ημιτονοειδείς. Ο engine υπολογίζει την επιτάχυνση από J·dω/dt = Te − TL − Bω, αλλά δεν αποτελεί EMT επίλυση.'],
+ ['11','Ανορθωτές — FFT και τύποι','Στη δεύτερη άσκηση οι αρμονικές εμφανίζονται ως διακριτά θολωτά φασματικά στοιχεία: x=τάξη ή Hz, y=% I₁ ή % I RMS, επιλέξιμο όριο αρμονικών. Οι τύποι περιλαμβάνουν MathML και κουμπί «Αναλυτική θεωρία +».'],
+   ['12','Αποτελέσματα και αρχεία','SVG κάθε όψης και JSON συνδεσμολογίας. '+(HAS_QUIZ?'Η πλήρης έκδοση δίνει και CSV/JSON της εξάσκησης.':'Η δημόσια έκδοση δεν περιλαμβάνει ερωτήσεις.')+' Λειτουργεί τοπικά χωρίς backend.']].map(([number,title,body])=>el('section',{className:'panel help-card',key:number},el('span',{className:'help-number'},number),el('h3',null,title),el('p',null,body)))),
  el('div',{className:'safety-footer'},el('strong',null,'Περιορισμός μοντέλου: '),'Ο editor ελέγχει την τοπολογία και υπολογίζει συμμετρικά ρεύματα με σταθερή εμπέδηση. Η καρτέλα Κυματομορφές χρησιμοποιεί ξεχωριστό εκπαιδευτικό ισοδύναμο ανά φάση, χωρίς πλήρη ηλεκτρομαγνητική μεταβατική επίλυση, πραγματικές καμπύλες θερμικού, βιομηχανικά interlocks ή έλεγχο IEC συμμόρφωσης. Μόνο για εκπαιδευτική χρήση.'));
  }
 }

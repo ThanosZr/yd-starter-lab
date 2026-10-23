@@ -1,13 +1,12 @@
 {
-  "name": "yd-lab-react",
-  "version": "3.0.0",
+  "name": "electrical-multi-lab-public",
+  "version": "4.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node tools/serve.mjs",
     "test": "node --test tests/*.test.mjs",
-    "build": "node tools/build.mjs --public",
-    "build:public": "node tools/build.mjs --public"
+    "build": "node tools/build-v4.mjs --public --multi --target=dist"
   },
   "license": "MIT"
 }

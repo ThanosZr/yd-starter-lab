@@ -1,0 +1,9 @@
+QA summary (2026-10-23)
+- 21 Node.js automated tests passed (motor/topology/rectifier/harmonic precision).
+- Embedded-HTML Chromium smoke: all four variants loaded with no page errors.
+- PUBLIC MULTI LAB: 3φ sample Vd average ~67.52 V for VLL=50 V RMS at 50 Hz.
+- 12 rendered MathML equations in advanced rectifier mode; 6 in basic mode.
+- 390px mobile smoke: document width equals viewport width for both workspace and rectifier.
+- Scrollable power canvas viewport observed to grow from 1200x870 to 1230x960 on actual mouse drag of K3M and to 2280x1530 on test repositioning.
+- Motor scope default time range 0-60 s; X+ changed time/div as expected.
+- File protocol opening was not independently tested because the test environment blocks direct file:// navigation. Offline embedded script execution was verified by the build check and Chromium document injection.
