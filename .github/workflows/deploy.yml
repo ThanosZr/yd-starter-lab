@@ -1,7 +1,8 @@
-name: Deploy MULTI-LAB to GitHub Pages
+name: Deploy MULTI-LAB v4.1 to GitHub Pages
+
 on:
   push:
-    branches: [main]
+    branches: [industrial-electronics-virtual-lab]
   workflow_dispatch:
 permissions:
   contents: read
