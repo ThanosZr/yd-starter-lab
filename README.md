@@ -1,6 +1,6 @@
-# MULTI-LAB v4.3 — PUBLIC
+# MULTI-LAB v4.4 — PUBLIC
 
-**Static offline interactive laboratory** for engineering students. Includes Star–Delta Motor Starter and Single/Three Phase Diode Rectifier labs. No quizzes and no answer banks are included.
+**Static offline interactive laboratory** for engineering students. Includes Star–Delta Motor Starter and Single/Three Phase Diode Rectifier labs. PUBLIC: χωρίς ερωτήσεις. FULL: 36 ερωτήσεις Υ/Δ και 12 ερωτήσεις ανορθωτών, με επιλογές και εξηγήσεις.
 
 ## Quick start
 
@@ -49,3 +49,11 @@ The ready-to-publish `index.html` embeds scripts and styling and works offline.
 ## Διατήρηση προσθηκών v4.2
 
 Η v4.3 ενσωματώνει όλες τις προσθήκες ανορθωτών του v4.2: MATH/MEASURE, πράξεις καναλιών, RMS/μέση τιμή/ενέργεια, επιλογή χρονικού παραθύρου, Math CSV, ανεξάρτητη περιοδική λύση, λ/PF, I₁/I, S₁ και διευρυμένη θεωρία. Δείτε το [CHANGELOG-v4.3.md](CHANGELOG-v4.3.md) για τη συγχώνευση και τους ελέγχους διατήρησης.
+
+## Φορτίο άξονα σε N·m — v4.4
+
+Στην καρτέλα «Κυματομορφές & ροπή» επίλεξε «Ορισμός φορτίου → Ροπή σε N·m». Ρύθμισε την αρχική TL και την TL μετά τη μεταγωγή, και ενεργοποίησε «Αλλαγή φορτίου στην είσοδο Δ». Προεπιλογή: Υ 10 → Δ 60 N·m, σταθερή ροπή. Το δεύτερο φορτίο εφαρμόζεται όταν κλείνει ο Δ, μετά τον νεκρό χρόνο. Η Te, η επιτάχυνση και τα ρεύματα υπολογίζονται από το μοντέλο.
+
+Διατίθενται επίσης ένα σταθερό φορτίο σε όλη τη δοκιμή, φορτίο ανεμιστήρα (οι τιμές N·m ορίζονται στην ονομαστική ταχύτητα) και η αρχική ρύθμιση σε % ονομαστικής ροπής. Οι αλλαγές ρυθμίσεων επαναφέρουν τη δοκιμή. Το CSV περιλαμβάνει TL αναφοράς και στάδιο φόρτισης.
+
+Ο builder δημιουργεί PUBLIC με `--public --multi` και FULL με `--multi`. Οι δύο εκδόσεις έχουν το ίδιο μοντέλο και τις ίδιες προσθήκες ανορθωτών v4.2. Στο υπάρχον GitHub repository κράτησε το workflow και το branch δημοσίευσης που ήδη χρησιμοποιείς.

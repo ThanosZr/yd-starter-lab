@@ -45,23 +45,31 @@ function ratedLoadTorque(ratedDelta=400,params=MOTOR_DEFAULTS){
  const sn=params.ratedSlip??RATED_SLIP,p=motorPoint(sn,'delta',ratedDelta,params);
  return Math.max(0,p.torque-params.viscous*(1-sn)*p.omegaSync);
 }
-function loadTorque(omega,loadPct,ratedDelta=400,params=MOTOR_DEFAULTS,shape='constant'){
- const rated=ratedLoadTorque(ratedDelta,params)*clamp(loadPct,0,100)/100;
+// Explicit shaft torque is independent of the electrical connection. The
+// optional second level represents an externally applied load when Delta closes.
+function loadReferenceTorque(config,stage='initial'){
+ if(config.loadUnit!=='torque')return ratedLoadTorque(motorRating(config.plate).delta,config.params)*clamp(config.loadPct??0,0,100)/100;
+ const value=stage==='delta'&&config.deltaLoadEnabled?config.deltaLoadTorqueNm:config.loadTorqueNm;
+ return Number.isFinite(value)?Math.max(0,value):0;
+}
+function loadTorque(omega,loadPct,ratedDelta=400,params=MOTOR_DEFAULTS,shape='constant',shaftTorqueNm=null){
+ const rated=Number.isFinite(shaftTorqueNm)?Math.max(0,shaftTorqueNm):ratedLoadTorque(ratedDelta,params)*clamp(loadPct,0,100)/100;
  const ratedOmega=(1-(params.ratedSlip??RATED_SLIP))*4*Math.PI*params.f/params.poles;
  return rated*(shape==='fan'?(Math.max(0,omega)/ratedOmega)**2:1);
 }
-function motorSnapshot(speed,run,loadPct,volts=400,params=MOTOR_DEFAULTS,shape='constant',ratedDelta=400){
+function motorSnapshot(speed,run,loadPct,volts=400,params=MOTOR_DEFAULTS,shape='constant',ratedDelta=400,shaftTorqueNm=null){
  const v=clamp(speed,0,1),p=motorPoint(1-v,run==='STAR'?'star':'delta',volts,params);
- const on=run==='STAR'||run==='DELTA',shaftLoad=loadTorque(v*p.omegaSync,loadPct,ratedDelta,params,shape),friction=params.viscous*v*p.omegaSync;
- return {speed:v,slip:1-v,rpm:p.rpm,torque:on?p.torque:0,load:shaftLoad,friction,
+ const on=run==='STAR'||run==='DELTA',shaftLoad=loadTorque(v*p.omegaSync,loadPct,ratedDelta,params,shape,shaftTorqueNm),friction=params.viscous*v*p.omegaSync;
+ const loadReferenceNm=Number.isFinite(shaftTorqueNm)?Math.max(0,shaftTorqueNm):ratedLoadTorque(ratedDelta,params)*clamp(loadPct,0,100)/100;
+ return {speed:v,slip:1-v,rpm:p.rpm,torque:on?p.torque:0,load:shaftLoad,friction,loadReferenceNm,
   current:on?p.currentLine:0,currentPhase:on?p.currentPhase:0,voltagePhase:on?p.voltagePhase:0};
 }
-function integrateMotor(speed,dt,run,loadPct,volts=400,params=MOTOR_DEFAULTS,shape='constant',ratedDelta=400){
+function integrateMotor(speed,dt,run,loadPct,volts=400,params=MOTOR_DEFAULTS,shape='constant',ratedDelta=400,shaftTorqueNm=null){
  const omegaS=4*Math.PI*params.f/params.poles;let omega=clamp(speed,0,1)*omegaS;
  const on=run==='STAR'||run==='DELTA',mode=run==='STAR'?'star':'delta';
  const acceleration=w=>{
   const u=clamp(w,0,omegaS),te=on?motorPoint(1-u/omegaS,mode,volts,params).torque:0;
-  const a=(te-loadTorque(u,loadPct,ratedDelta,params,shape)-params.viscous*u)/params.J;
+  const a=(te-loadTorque(u,loadPct,ratedDelta,params,shape,shaftTorqueNm)-params.viscous*u)/params.J;
   return u===0&&a<0?0:a;
  };
  const n=Math.max(1,Math.ceil(Math.max(0,dt)/.008)),h=Math.max(0,dt)/n;
@@ -70,7 +78,7 @@ function integrateMotor(speed,dt,run,loadPct,volts=400,params=MOTOR_DEFAULTS,sha
   const a=acceleration(omega),b=acceleration(omega+h*a/2),d=acceleration(omega+h*b/2),e=acceleration(omega+h*d);
   omega=clamp(omega+h*(a+2*b+2*d+e)/6,0,omegaS);
  }
- return motorSnapshot(omega/omegaS,run,loadPct,volts,params,shape,ratedDelta);
+ return motorSnapshot(omega/omegaS,run,loadPct,volts,params,shape,ratedDelta,shaftTorqueNm);
 }
 function motorScenario({plate='400/690',vl=400,startMode='star-delta',params=null}={}){
  const rating=motorRating(plate),finalConnection=startMode==='star'?'star':'delta';
@@ -88,20 +96,21 @@ function motorScenario({plate='400/690',vl=400,startMode='star-delta',params=nul
 function startingRun(config){return config.startMode==='delta'?'DELTA':'STAR';}
 function electricalRun(run,config){return run==='STAR'&&config.starRemoved?'DEAD':run;}
 function scenarioSnapshot(state,config){
- const m=motorSnapshot(state.speed,electricalRun(state.run,config),config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta);
- return {...m,time:state.time,run:state.run};
+ const loadStage=state.loadStage??(state.run==='DELTA'?'delta':'initial');
+ const m=motorSnapshot(state.speed,electricalRun(state.run,config),config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta,loadReferenceTorque(config,loadStage));
+ return {...m,time:state.time,run:state.run,loadStage};
 }
 // Shared live/prediction event engine. Split at exact timed boundaries; retain
 // both sides of each current/torque jump at the same time coordinate.
 function advanceMotor(state,dt,config){
- let next={time:state.time,speed:state.speed,run:state.run,switchAt:state.switchAt},remaining=Math.max(0,dt);const points=[];
+ let next={time:state.time,speed:state.speed,run:state.run,switchAt:state.switchAt,loadStage:state.loadStage??(state.run==='DELTA'?'delta':'initial')},remaining=Math.max(0,dt);const points=[];
  const emit=()=>points.push(scenarioSnapshot(next,config));
  const transition=()=>{
   if(next.run==='STAR'&&config.startMode==='star-delta'&&
    (config.strategy==='speed'?next.speed*100>=config.threshold:next.time>=config.delay-1e-10)){
    emit();next.run='DEAD';next.switchAt=next.time;emit();return true;
   }
-  if(next.run==='DEAD'&&next.time>=next.switchAt+config.deadTime-1e-10){emit();next.run='DELTA';emit();return true;}
+  if(next.run==='DEAD'&&next.time>=next.switchAt+config.deadTime-1e-10){emit();next.run='DELTA';next.loadStage='delta';emit();return true;}
   return false;
  };
  while(remaining>1e-10){
@@ -110,7 +119,7 @@ function advanceMotor(state,dt,config){
   if(next.run==='STAR'&&config.startMode==='star-delta'&&config.strategy!=='speed')h=Math.min(h,Math.max(0,config.delay-next.time));
   if(next.run==='DEAD')h=Math.min(h,Math.max(0,next.switchAt+config.deadTime-next.time));
   if(h<=1e-10){if(!transition())break;continue;}
-  const m=integrateMotor(next.speed,h,electricalRun(next.run,config),config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta);
+  const m=integrateMotor(next.speed,h,electricalRun(next.run,config),config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta,loadReferenceTorque(config,next.loadStage));
   next.speed=m.speed;next.time+=h;remaining-=h;
  }
  transition();emit();return {state:next,points,live:scenarioSnapshot(next,config)};
@@ -118,7 +127,7 @@ function advanceMotor(state,dt,config){
 function predictMotor(config,duration,step=.08){
  if(!motorScenario(config).allowed)return [];
  if(config.starRemoved&&config.startMode==='star-delta'&&config.strategy==='speed')return [];
- let state={time:0,speed:0,run:startingRun(config),switchAt:0};const points=[scenarioSnapshot(state,config)];
+ let state={time:0,speed:0,run:startingRun(config),switchAt:0,loadStage:config.startMode==='delta'?'delta':'initial'};const points=[scenarioSnapshot(state,config)];
  while(state.time<duration-1e-9){const part=advanceMotor(state,Math.min(step,duration-state.time),config);state=part.state;points.push(...part.points);}
  return points;
 }
@@ -143,8 +152,9 @@ function historyAt(history,t,config){
  let lo=0,hi=history.length;
  while(lo<hi){const mid=(lo+hi)>>1;if(history[mid].time<=t)lo=mid+1;else hi=mid;}
  const a=history[Math.max(0,lo-1)],b=history[Math.min(lo,history.length-1)],q=b.time>a.time?clamp((t-a.time)/(b.time-a.time),0,1):0;
- const speed=a.speed+(b.speed-a.speed)*q,run=electricalRun(a.run,config);
- return {...motorSnapshot(speed,run,config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta),run};
+ const speed=a.speed+(b.speed-a.speed)*q,run=electricalRun(a.run,config),loadStage=a.loadStage??(a.run==='DELTA'?'delta':'initial');
+ const reference=Number.isFinite(a.loadReferenceNm)?a.loadReferenceNm:loadReferenceTorque(config,loadStage);
+ return {...motorSnapshot(speed,run,config.loadPct,config.vl,config.params,config.loadShape,motorRating(config.plate).delta,reference),run,loadStage};
 }
 function currentScopeSeries(history,view,config,kind='both'){
  const a=Math.max(0,view.x0),b=Math.min(config.timeHorizon,view.x1,history.at(-1)?.time??0);if(b<=a||!history.length)return [];
@@ -163,4 +173,4 @@ function currentScopeSeries(history,view,config,kind='both'){
  for(const t of times){const x=historyAt(history,t,config),w=instantaneousCurrents(t,x.speed,x.run,config.vl,config.params,config.layouts?.[x.run]);traces.forEach(trace=>trace.points.push([t,w[trace.group][trace.index]]));}
  return traces;
 }
-export {MOTOR_DEFAULTS,RATED_SLIP,motorRating,motorPreset,rescaleMotor,motorImpedance,motorPoint,ratedLoadTorque,loadTorque,motorSnapshot,integrateMotor,motorScenario,startingRun,scenarioSnapshot,advanceMotor,predictMotor,instantaneousCurrents,calculateTrace,historyAt,currentScopeSeries};
+export {MOTOR_DEFAULTS,RATED_SLIP,motorRating,motorPreset,rescaleMotor,motorImpedance,motorPoint,ratedLoadTorque,loadReferenceTorque,loadTorque,motorSnapshot,integrateMotor,motorScenario,startingRun,scenarioSnapshot,advanceMotor,predictMotor,instantaneousCurrents,calculateTrace,historyAt,currentScopeSeries};

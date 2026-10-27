@@ -1,0 +1,20 @@
+ECE-MULTI-LAB v4.4 — Verification
+
+63 automated tests passed in source with the restored FULL question banks.
+
+Includes 6 new physical/event load tests and 2 UI/edition regressions.
+Tests cover exact load application at Delta closure, dead-time load, continuous
+speed, same-slip electrical solution, settled torque balance, both nameplates,
+playback-rate agreement, permanent Y/direct Delta, single and two-level torque,
+legacy percent loading, fan reference speed, overload/stall, UI controls and quiz
+rendering. Original v4.2 rectifier and MATH/MEASURE module hashes pass.
+
+The numerical 10 -> 60 Nm example at 230/400 V, VLL=230 V, 8 s in Y gives:
+Y: 1424.74 rpm, Te=47.30 Nm, TL=10 Nm, IL=Iphase=21.90 A.
+Delta settled: 1451.99 rpm, Te=98.01 Nm, TL=60 Nm,
+IL=44.64 A, Iphase=25.77 A.
+
+UI tests render the actual UI classes/scopes using a minimal React host.
+A full browser was unavailable: Chromium executable is not installed.
+Full desktop/mobile visual and pointer QA is not claimed.
+The quasi-steady electrical and mechanical limitations remain in MOTOR-MODEL.md.

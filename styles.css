@@ -109,3 +109,8 @@
 .dyn-kpis{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
 .motor-settings .btn.quiet{white-space:normal}
 @media(max-width:520px){.motor-settings{padding:10px}.motor-settings .field-grid{grid-template-columns:1fr}.motor-explanation{padding:12px}.dyn-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* v4.4 — shaft torque input and externally scheduled Delta load. */
+.motor-load-controls{margin:12px 0 17px;padding:16px;border:1px solid #3c6875;border-radius:12px;background:#0c2836;min-width:0}
+.motor-load-controls .subhead{margin-bottom:12px}.motor-load-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}.motor-load-grid>label{font-size:11px;color:#b7ccdc;font-weight:750;line-height:1.5;min-width:0;display:grid;gap:6px}.motor-load-grid .motor-load-step{display:flex;align-items:center;gap:9px;min-height:43px;padding:8px 0}.motor-load-step input{flex-shrink:0;width:18px;height:18px;margin:0}.motor-load-grid .dyn-load-slider{grid-column:auto}.motor-load-summary{font-size:11px;line-height:1.7;color:#a8cbd4;margin:13px 0 0}.motor-load-example{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:12px}.motor-load-example>span{flex:1;min-width:180px;font-size:11px;line-height:1.6;color:#9ebacb}.motor-load-example .btn{min-height:42px;white-space:normal}
+@media(max-width:560px){.motor-load-controls{padding:12px}.motor-load-grid{grid-template-columns:1fr}.motor-load-example{align-items:stretch;flex-direction:column}.motor-load-grid input,.motor-load-grid select{min-height:44px}.motor-load-step input{min-height:18px}.motor-load-controls .subhead{flex-wrap:wrap}}
