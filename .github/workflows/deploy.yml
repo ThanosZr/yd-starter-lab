@@ -1,7 +1,7 @@
 name: Deploy YD LAB to GitHub Pages
 on:
   push:
-    branches: [main]
+    branches: [industrial-electronics-virtual-lab]
   workflow_dispatch:
 permissions:
   contents: read
