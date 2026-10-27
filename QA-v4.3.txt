@@ -1,0 +1,10 @@
+ECE-MULTI-LAB v4.3 — Verification
+
+55 automated tests passed.
+
+Includes v4.2 rectifier/Math/Measure implementation plus the v4.1.1 motor corrections.
+Original v4.2 module body hashes are verified, allowing only imports/exports and the Math CSV version name.
+120 motor graph/model combinations are covered. Additional tests cover periodic rectifier measurements, power relationships, diode current partition, scope units, derived-signal statistics and integration, and combined UI rendering.
+
+UI rendering tests use a minimal React host and check SVG output. Full browser visual/pointer QA was unavailable in this environment.
+Motor quasi-steady/EMT limitations are documented in MOTOR-MODEL.md.

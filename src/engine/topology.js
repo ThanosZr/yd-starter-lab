@@ -69,11 +69,11 @@ function solveFloatingWindingNets(groups,root,vl){
   }
   return {values,reachable,allW};
 }
-function analyzeTopology(wires,{mode='star',thermal='line',vl=400,z=20,pf=0.8,trip=false}={}){
+function analyzeTopology(wires,{mode='star',thermal='line',vl=400,z=20,pf=0.8,impedance:givenImpedance=null,trip=false,supplyOn=true}={}){
   const dsu=new DSU(allTerminals());
   for(const w of wires){if(cleanWire(w))dsu.union(w.a,w.b);}
   // Closed contacts of the main and selected changeover contactor.
-  const closed=['K1M',...(trip?[]:['F3']),...(mode==='star'?['K3M']:mode==='delta'?['K2M']:[])];
+  const closed=[...(supplyOn?['K1M']:[]),...(trip?[]:['F3']),...(mode==='star'?['K3M']:mode==='delta'?['K2M']:[])];
   C.forEach(c=>{if(closed.includes(c))for(let i=0;i<3;i++)dsu.union(pin(c,'a',i),pin(c,'b',i));});
   // The three output terminals of the star contactor are factory-bussed.
   dsu.union('K3M.b1','K3M.b2');dsu.union('K3M.b2','K3M.b3');
@@ -98,19 +98,19 @@ function analyzeTopology(wires,{mode='star',thermal='line',vl=400,z=20,pf=0.8,tr
     for(let i=0;i<3;i++)if(same(`M.${STARTS[i]}`,`M.${ENDS[i]}`))faults.push(`Απευθείας γέφυρα στο τύλιγμα ${STARTS[i]}.`);
   }
   const voltageNets=solveFloatingWindingNets(groups,root,vl);
-  const impedance=complex(Math.max(.01,z)*pf,Math.max(.01,z)*Math.sqrt(1-pf*pf));
+  const impedance=givenImpedance?complex(givenImpedance.r,givenImpedance.i):complex(Math.max(.01,z)*pf,Math.max(.01,z)*Math.sqrt(1-pf*pf));
   const branch=STARTS.map((s,i)=>{
     const a=`M.${s}`,b=`M.${ENDS[i]}`,ra=root(a),rb=root(b);
     const va=voltageNets.values.get(ra)||complex(),vb=voltageNets.values.get(rb)||complex();
     const diff=sub(va,vb),current=div(diff,impedance);
-    return {name:s[0],start:a,end:b,voltage:mag(diff),current:mag(current),currentComplex:current,energized:voltageNets.reachable.has(ra)&&voltageNets.reachable.has(rb)};
+    return {name:s[0],start:a,end:b,voltage:mag(diff),voltageComplex:diff,current:mag(current),currentComplex:current,energized:voltageNets.reachable.has(ra)&&voltageNets.reachable.has(rb)};
   });
   const lines=PHASES.map(p=>{
     let sum=complex(); const pr=root(p);
     branch.forEach((b,i)=>{if(root(b.start)===pr)sum=add(sum,b.currentComplex);if(root(b.end)===pr)sum=sub(sum,b.currentComplex)});
-    return {name:p,current:mag(sum)};
+    return {name:p,current:mag(sum),currentComplex:sum};
   });
-  const ratedDelta = vl/(Math.max(.01,z))*Math.sqrt(3);
+  const ratedDelta = vl/mag(impedance)*Math.sqrt(3);
   const healthy=faults.length===0&&warnings.length===0;
   return {mode,thermal,groups,netOf,root,same,branch,lines,ratedDelta,healthy,faults:[...new Set(faults)],warnings:[...new Set(warnings)],
     diagram:STARTS.map((s,i)=>({start:s,end:ENDS[i],startNet:netOf(`M.${s}`),endNet:netOf(`M.${ENDS[i]}`),...branch[i]})),

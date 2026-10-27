@@ -1,11 +1,12 @@
-# MULTI-LAB v4.1 — PUBLIC
+# MULTI-LAB v4.3 — PUBLIC
 
 **Static offline interactive laboratory** for engineering students. Includes Star–Delta Motor Starter and Single/Three Phase Diode Rectifier labs. No quizzes and no answer banks are included.
 
 ## Quick start
 
 - Open `index.html` or `standalone.html` by double-clicking. No internet, server, Node.js, or package install is required.
-- GitHub Pages: upload the content of this ZIP into the repository root, including `.github/workflows/deploy.yml`. In Settings → Pages choose GitHub Actions. The workflow deploys on push to `main`. If a conflicting Pages workflow exists, keep only one.
+- Existing GitHub Pages repository: keep its current publishing branch and deployment workflow. Update the application files in a separate branch, then open a PR targeting the publishing branch and merge it there.
+- New repository: the included `.github/workflows/deploy.yml` is an example for publishing from `main` using GitHub Actions.
 - Make sure `index.html` is at the root.
 
 ## Using the oscilloscope (desktop and phone)
@@ -21,7 +22,7 @@
 - Three-phase six-pulse bridge: defaults Vab=50 V RMS (line-line), 50 Hz, R=50 Ω, L=0 H; R-L laboratory preset 450 mH.
 - Optional L→∞ idealized constant-current steady state; timestep editable with sample count bounded for phone performance.
 - Actual time-stepped exponential integration of RL current; diode conduction pairs and input current computed from the ideal bridge. No commutation overlap, diode drops, source impedance, or failure currents are solved.
-- A coherent 1200 samples/cycle Fourier analysis is used to reduce switching-discretization artifacts. The last up to four cycles used for RMS, harmonic projections, THD, PF, cosφ₁, P, Q₁, S, and D.
+- A coherent 1200 samples/cycle Fourier analysis is used to reduce switching-discretization artifacts. An independent periodic solution supplies RMS, harmonics, THD, PF, cosφ₁, P, Q₁, S, S₁ and D, even when the startup trace has not settled.
 - Pause, play, step, scrub time, scopes, CSV waveform export, discrete spectral lobes (% of I1 or Irms, h or Hz), progressive MathML formulas, and quiz only when enabled.
 
 ## Safety
@@ -38,3 +39,13 @@ Unofficial independent educational software, not endorsed by NTUA; not a certifi
 - `src/main.js` React UI for YD lab
 
 The ready-to-publish `index.html` embeds scripts and styling and works offline.
+
+## Διορθωμένο μοντέλο κινητήρα
+
+Δείτε το [MOTOR-MODEL.md](MOTOR-MODEL.md) για τάσεις πινακίδας, κοινό Zin(s), ρεύματα γραμμής/τυλίγματος, ροπή, παραδοχές και όρια ακρίβειας. Οι νέες ρυθμίσεις είναι και στην καρτέλα «Κυματομορφές & ροπή». Το `standalone.html` και το `index.html` περιλαμβάνουν την ίδια πλήρη εφαρμογή.
+
+Για έλεγχο: `npm test`. Για επαναδημιουργία HTML: `npm run build` (αποτέλεσμα στον φάκελο `dist`).
+
+## Διατήρηση προσθηκών v4.2
+
+Η v4.3 ενσωματώνει όλες τις προσθήκες ανορθωτών του v4.2: MATH/MEASURE, πράξεις καναλιών, RMS/μέση τιμή/ενέργεια, επιλογή χρονικού παραθύρου, Math CSV, ανεξάρτητη περιοδική λύση, λ/PF, I₁/I, S₁ και διευρυμένη θεωρία. Δείτε το [CHANGELOG-v4.3.md](CHANGELOG-v4.3.md) για τη συγχώνευση και τους ελέγχους διατήρησης.

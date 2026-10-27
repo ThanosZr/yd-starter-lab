@@ -1,0 +1,6 @@
+{
+  "src/engine/rectifier.js": "c6bacd45f09c3d99cb9beb92f42918c89f3d3ca4d4ed4ef48a895ff297cdff84",
+  "src/engine/scope-math.js": "539567aea6fc11a979e089446b347a880dcb1327c5382a24b199af580d22398c",
+  "src/oscilloscope-math.js": "e79eb1047f999bae6ca79050fee2b1ae7df3759094061603910e0d5d6935e97f",
+  "src/rectifier-ui.js": "dc2f9d060ed5060def675c578020e20ba1800466e0043622bcb6ff6df2072384"
+}

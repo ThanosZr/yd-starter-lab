@@ -3,7 +3,7 @@ import {RectifierLab} from './rectifier-ui.js';
 import RECT_QUIZ from './rectifier-quiz.js';
 import {PHASES,STARTS,ENDS,fmt,defaultWires,allTerminals,auditBoth,analyzeTopology,replaceWireEndpoint,makeWire,sampleBadWires} from './engine/topology.js';
 import QUIZ from './quiz.js';
-import {MOTOR_DEFAULTS,motorPoint,ratedLoadTorque,loadTorque,integrateMotor,calculateTrace} from './engine/motor-dynamics.js';
+import {MOTOR_DEFAULTS,RATED_SLIP,motorRating,motorPreset,rescaleMotor,motorImpedance,motorPoint,ratedLoadTorque,loadTorque,motorSnapshot,motorScenario,startingRun,scenarioSnapshot,advanceMotor,predictMotor,currentScopeSeries} from './engine/motor-dynamics.js';
 const HAS_QUIZ = typeof __HAS_QUIZ__==='undefined'?true:__HAS_QUIZ__;
 const HAS_RECT = typeof __HAS_RECT__==='undefined'?true:__HAS_RECT__;
 const h=React.createElement;
@@ -47,58 +47,62 @@ function starIsDisconnected(wires,thermal){
 function chartSvg(series,options={}){return el(ScopeChart,{series,options:{...options,scopeId:'yd-'+(options.title||'scope').replace(/[^a-zA-Z0-9]/g,'').slice(0,24)}});}
 
 function appState(){let loaded={};try{loaded=JSON.parse(localStorage.getItem('ydlab-v2')||'{}')}catch{}
- return {tab:'workspace',wires:Array.isArray(loaded.wires)?loaded.wires:defaultWires(),thermal:loaded.thermal||'line',strategy:loaded.strategy||'mounted',loadPct:10,loadShape:'constant',params:{...MOTOR_DEFAULTS},history:[],bypassStar:false,live:{torque:0,load:0,current:0,slip:1,rpm:0},preview:'star',run:'OFF',time:0,speed:0,switchAt:0,timeHorizon:60,simRate:1,plate:'400/690',vl:400,z:20,inum:20,delay:4,deadTime:.32,threshold:85,mode:'edit',showTip:true,labels:loaded.labels||{},netLabels:loaded.netLabels||{},layout:loaded.layout||structuredClone(defaultLayout),selectedWire:null,selectedPin:null,pending:null,zoom:{power:1,diagram:1},pan:{power:{x:0,y:0},diagram:{x:0,y:0}},dragPreview:null,alert:'Έτοιμο. Σύρε καλώδιο από έναν ακροδέκτη σε άλλον ή χρησιμοποίησε την καθοδηγούμενη κατασκευή.',quizIndex:0,answers:{},reveal:true,filter:'όλα',guide:0,showNets:true};}
+ return {tab:'workspace',wires:Array.isArray(loaded.wires)?loaded.wires:defaultWires(),thermal:loaded.thermal||'line',strategy:loaded.strategy||'mounted',loadPct:10,loadShape:'constant',params:motorPreset(),startMode:'star-delta',previewSlip:1,zTarget:20,zRefSlip:1,currentView:'both',history:[],bypassStar:false,live:{torque:0,load:0,current:0,currentPhase:0,voltagePhase:0,friction:0,slip:1,rpm:0},preview:'star',run:'OFF',time:0,speed:0,switchAt:0,timeHorizon:60,simRate:1,plate:'400/690',vl:400,delay:4,deadTime:.32,threshold:85,mode:'edit',showTip:true,labels:loaded.labels||{},netLabels:loaded.netLabels||{},layout:loaded.layout||structuredClone(defaultLayout),selectedWire:null,selectedPin:null,pending:null,zoom:{power:1,diagram:1},pan:{power:{x:0,y:0},diagram:{x:0,y:0}},dragPreview:null,alert:'Έτοιμο. Σύρε καλώδιο από έναν ακροδέκτη σε άλλον ή χρησιμοποίησε την καθοδηγούμενη κατασκευή.',quizIndex:0,answers:{},reveal:true,filter:'όλα',guide:0,showNets:true};}
 class App extends React.Component {
  constructor(p){super(p);this.state=appState();this.pointer=null;this.lastTick=performance.now();this.svgRefs={};this.frameRef=null;this.canvasScroll={};this.predictionCache=null;}
  componentDidMount(){this.timer=setInterval(()=>this.tick(),95);window.addEventListener('keydown',this.onGlobalKey);}
  componentWillUnmount(){clearInterval(this.timer);window.removeEventListener('keydown',this.onGlobalKey)}
  onGlobalKey=(e)=>{if(e.key==='Escape')this.setState({pending:null,selectedWire:null,selectedPin:null,dragPreview:null});if((e.key==='Delete'||e.key==='Backspace')&&document.activeElement?.tagName!=='INPUT'&&document.activeElement?.tagName!=='TEXTAREA'&&document.activeElement?.tagName!=='SELECT'){this.removeSelected();}}
- patch=(p,save=false)=>this.setState(p,()=>{if(save)this.persist();});
+ patch=(p,save=false)=>{
+  const physics=['vl','plate','params','startMode','delay','deadTime','threshold','strategy','timeHorizon'];
+  const reset=physics.some(k=>k in p)||(!['STAR','DEAD','DELTA'].includes(this.state.run)&&['loadPct','loadShape'].some(k=>k in p));
+  this.setState(reset?{run:'OFF',time:0,speed:0,switchAt:0,history:[],bypassStar:false,live:motorSnapshot(0,'OFF',p.loadPct??this.state.loadPct,p.vl??this.state.vl,p.params??this.state.params,p.loadShape??this.state.loadShape,motorRating(p.plate??this.state.plate).delta),...p}:p,()=>{if(save)this.persist();});
+ };
  persist=()=>{const s=this.state;try{localStorage.setItem('ydlab-v2',JSON.stringify({wires:s.wires,labels:s.labels,netLabels:s.netLabels,layout:s.layout,thermal:s.thermal,strategy:s.strategy}))}catch{}}
- changeWires=(w,notice)=>this.setState({wires:w,run:'OFF',time:0,speed:0,history:[],live:{torque:0,load:0,current:0,slip:1,rpm:0},bypassStar:false,alert:notice||'Το κύκλωμα επανυπολογίστηκε από την πραγματική συνδεσιμότητα.'},this.persist);
+ changeWires=(w,notice)=>this.setState({wires:w,run:'OFF',time:0,speed:0,history:[],live:{torque:0,load:0,current:0,currentPhase:0,voltagePhase:0,friction:0,slip:1,rpm:0},bypassStar:false,alert:notice||'Το κύκλωμα επανυπολογίστηκε από την πραγματική συνδεσιμότητα.'},this.persist);
  autoBuild=(type='standard')=>{
    const w=defaultWires(this.state.thermal);
    this.changeWires(type==='without-star'?w.filter(x=>!starLeadWires([x]).length):w,
      type==='without-star'?'Αφαιρέθηκαν οι 3 συνδέσεις U2/V2/W2 προς K3M. Ο K3M οπλίζει χωρίς να σχηματίζει Υ· μετά τον χρόνο εφαρμόζεται Δ (DOL εκκίνηση με καθυστέρηση).':'Αυτόματη δημιουργία 18 αγωγών Υ/Δ. Έλεγξε την προεπισκόπηση και τη θέση F3.');
  };
  refreshLayout=()=>this.patch({layout:structuredClone(defaultLayout)},true);
- audit=()=>auditBoth(this.state.wires,{vl:this.state.vl,z:this.state.z,thermal:this.state.thermal});
+ audit=()=>{const s=this.state,slip=['STAR','DEAD','DELTA'].includes(s.run)?1-s.speed:s.previewSlip;return auditBoth(s.wires,{vl:s.vl,impedance:motorImpedance(slip,s.params),thermal:s.thermal});};
+ simulationConfig=()=>{const s=this.state,a=this.audit(),layouts=Object.fromEntries([['STAR',a.star],['DELTA',a.delta]].map(([run,g])=>[run,{voltageFactors:g.branch.map(b=>({re:b.voltageComplex.re/s.vl,im:b.voltageComplex.im/s.vl})),incidence:PHASES.map(phase=>g.branch.map(b=>(g.same(phase,b.start)?1:0)-(g.same(phase,b.end)?1:0)))}]));return {layouts,plate:s.plate,vl:s.vl,params:s.params,startMode:s.startMode,loadPct:s.loadPct,loadShape:s.loadShape,delay:s.delay,deadTime:s.deadTime,threshold:s.threshold,strategy:s.strategy,starRemoved:starIsDisconnected(s.wires,s.thermal),timeHorizon:s.timeHorizon};};
+ simulationReady=()=>{const s=this.state,a=this.audit(),removed=starIsDisconnected(s.wires,s.thermal);return s.startMode==='star'?a.star.healthy:s.startMode==='delta'?a.delta.healthy:a.ready||(removed&&a.delta.healthy);};
+ nominalPoint=()=>{const s=this.state,r=motorRating(s.plate),mode=s.startMode==='star'?'star':'delta';return motorPoint(s.params.ratedSlip??RATED_SLIP,mode,r[mode],s.params);};
+ changePlate=plate=>{const s=this.state;this.patch({plate,params:rescaleMotor(s.params,s.plate,plate),alert:'Αλλαγή εκπαιδευτικής παραλλαγής ίδιας ισχύος: R και X ανακλιμακώθηκαν με Vφ,N². Η τάση δικτύου διατηρείται. Οι τιμές δεν προκύπτουν από την πινακίδα πραγματικού κινητήρα.'});};
+ applyImpedance=()=>{const s=this.state,z=motorImpedance(s.zRefSlip,s.params),scale=s.zTarget/Math.hypot(z.r,z.i);this.patch({params:{...s.params,...Object.fromEntries(['R1','X1','R2','X2','Xm'].map(k=>[k,s.params[k]*scale]))},alert:'Ρυθμίστηκε το |Zin| στο επιλεγμένο s αναφοράς με κοινή κλιμάκωση R/X. Επανυπολογίστηκαν και τα ονομαστικά ρεύματα, το φορτίο και η ροπή.'});};
  activePreview=()=>this.state.run==='STAR'?'star':this.state.run==='DELTA'?'delta':this.state.preview;
- changeF3=(thermal)=>{this.patch({thermal,layout:{...this.state.layout,F3:thermal==='winding'?{x:610,y:122}:{x:415,y:122}},run:'OFF',time:0,speed:0,bypassStar:false,history:[],wires:defaultWires(thermal),selectedWire:null,alert:'Το F3 μετακινήθηκε στην πρότυπη τοπολογία. Επαναφέρθηκαν τα καλώδια ώστε η νέα θέση να είναι ηλεκτρικά σωστή.'},true)};
+ changeF3=(thermal)=>{this.patch({thermal,layout:{...this.state.layout,F3:thermal==='winding'?{x:610,y:122}:{x:415,y:122}},run:'OFF',time:0,speed:0,switchAt:0,live:motorSnapshot(0,'OFF',this.state.loadPct,this.state.vl,this.state.params,this.state.loadShape,motorRating(this.state.plate).delta),bypassStar:false,history:[],wires:defaultWires(thermal),selectedWire:null,alert:'Το F3 μετακινήθηκε στην πρότυπη τοπολογία. Επαναφέρθηκαν τα καλώδια ώστε η νέα θέση να είναι ηλεκτρικά σωστή.'},true)};
  start=()=>{
-   const a=this.audit(),removed=starIsDisconnected(this.state.wires,this.state.thermal);
-   if(!(a.ready || (removed&&a.delta.healthy))){this.patch({alert:'⛔ START αποκλείστηκε: λανθασμένη/ελλιπής συνδεσμολογία. Η ειδική δοκιμή επιτρέπει μόνο αφαίρεση ΚΑΙ των τριών γραμμών προς K3M με το υπόλοιπο Δ σωστό.'});return;}
-   if(removed&&this.state.strategy==='speed'){this.patch({alert:'⛔ Χωρίς αστέρα και χωρίς κίνηση δεν επιτυγχάνεται το όριο ταχύτητας. Χρησιμοποίησε μηχανικό ή ανεξάρτητο χρονικό.'});return;}
-   if(this.state.plate==='230/400'&&this.state.vl>260){this.patch({alert:'⛔ Κινητήρας 230/400 V (Δ/Υ) δεν επιτρέπεται να λειτουργήσει σε Δ με τάση γραμμής 400 V.'});return;}
-   this.lastTick=performance.now();this.patch({run:'STAR',bypassStar:removed,preview:'star',time:0,switchAt:0,speed:0,history:[],live:{torque:0,load:0,current:0,slip:1,rpm:0},alert:removed?'K1M+K3M οπλίζουν, αλλά λείπουν ΚΑΙ οι 3 γέφυρες του Υ: ο κινητήρας μένει ακίνητος. Μόνο μετά τη χρονική μεταγωγή σε Δ εμφανίζεται ρεύμα εκκίνησης.':'K1M+K3M ενεργοποιούνται. Ο κινητήρας επιταχύνει σε Υ, το πρόσθετο χρονικό μετρά όταν οπλίσει ο K3M.'});
+  const s=this.state,cfg=this.simulationConfig(),check=motorScenario(cfg);
+  if(!this.simulationReady()){this.patch({alert:'⛔ START αποκλείστηκε: η καλωδίωση δεν είναι έγκυρη για την επιλεγμένη μέθοδο.'});return;}
+  if(!check.allowed){this.patch({alert:'⛔ '+check.message});return;}
+  if(cfg.starRemoved&&s.startMode==='star-delta'&&s.strategy==='speed'){this.patch({alert:'⛔ Χωρίς κλάδο Υ δεν επιτυγχάνεται το όριο ταχύτητας. Επίλεξε χρονική μεταγωγή ή απευθείας Δ.'});return;}
+  const initial={run:startingRun(cfg),time:0,speed:0,switchAt:0},point=scenarioSnapshot(initial,cfg);
+  this.lastTick=performance.now();this.patch({...initial,bypassStar:cfg.starRemoved,preview:initial.run==='STAR'?'star':'delta',history:[point],live:point,alert:cfg.starRemoved&&s.startMode==='star-delta'?'K3M οπλίζει χωρίς κοινό Υ: μηδενικό ρεύμα και ροπή έως το Δ.':check.message});
  };
- stop=()=>this.patch({run:'OFF',bypassStar:false,alert:'STOP: το κύκλωμα ισχύος ανοίγει. Διατηρείται το ιστορικό κυματομορφών.'});
- trip=()=>this.patch({run:'TRIP',bypassStar:false,alert:'F3: θερμική απόζευξη (χειροκίνητη δοκιμή· δεν υλοποιείται καμπύλη θερμικής προστασίας).'});
+ finishRun=(run,alert)=>{const s=this.state,cfg=this.simulationConfig(),point=scenarioSnapshot({...s,run},cfg);this.patch({run,bypassStar:false,live:point,history:s.history.length?[...s.history,point]:[],alert});};
+ stop=()=>this.finishRun('OFF','STOP: μηδενικά ρεύματα και ηλεκτρομαγνητική ροπή. Το ιστορικό διατηρείται και η κίνηση παγώνει. Το σχέδιο επιστρέφει σε ρητή προεπισκόπηση.');
+ trip=()=>this.finishRun('TRIP','F3: θερμική απόζευξη δοκιμής. Δεν υλοποιείται καμπύλη θερμικής προστασίας.');
  tick=()=>{
-   const t=performance.now(),dt=Math.min((t-this.lastTick)/1000,.2)*this.state.simRate;this.lastTick=t;const s=this.state;
-   if(!['STAR','DEAD','DELTA'].includes(s.run))return;
-   const runForMotor=s.bypassStar&&s.run==='STAR'?'DEAD':s.run;
-   const m=integrateMotor(s.speed,dt,runForMotor,s.loadPct,s.vl,s.params,s.loadShape);
-   const speed=m.speed,time=s.time+dt;
-   let run=s.run,preview=s.preview,switchAt=s.switchAt,alert=s.alert;
-   if(run==='STAR'&&(s.strategy==='speed'?speed*100>=s.threshold:time>=s.delay)){
-     run='DEAD';switchAt=time;alert='K3M ανοίγει, νεκρός χρόνος, έπειτα επιτρέπεται η ενεργοποίηση του K2M.';
-   }else if(run==='DEAD'&&time-s.switchAt>=s.deadTime){
-     run='DELTA';preview='delta';alert=s.bypassStar?'K2M κλείνει: πρώτη εφαρμογή τάσης στον κινητήρα ως Δ, υψηλό ρεύμα εκκίνησης (DOL με χρονική καθυστέρηση).':'K2M κλείνει: λειτουργία σε Δ.';
-   }
-   const point={time,run:s.run,speed,slip:m.slip,torque:m.torque,load:m.load,current:m.current};
-   const history=[...s.history,point].slice(-Math.max(720,Math.min(7000,Math.ceil(s.timeHorizon*12))));
-   if(time>=s.timeHorizon){run='OFF';alert=`Η προσομοίωση ολοκληρώθηκε στα ${s.timeHorizon} s. Τα δείγματα και η περιβάλλουσα παραμένουν για ανάλυση.`;}
-   this.patch({time,speed,run,preview,switchAt,live:m,history,alert});
+  const t=performance.now(),s=this.state,dt=Math.min((t-this.lastTick)/1000,.2)*s.simRate;this.lastTick=t;
+  if(!['STAR','DEAD','DELTA'].includes(s.run)||s.time>=s.timeHorizon-1e-9)return;
+  const part=advanceMotor(s,Math.min(dt,Math.max(0,s.timeHorizon-s.time)),this.simulationConfig());
+  const history=[...s.history,...part.points],n=part.state;
+  let alert=s.alert;
+  if(n.run!==s.run)alert=n.run==='DEAD'?'K3M ανοίγει: μηδενικά I και Te στον νεκρό χρόνο.':'K2M κλείνει: λειτουργία σε Δ. Το ρεύμα καθορίζεται από την τρέχουσα ολίσθηση.';
+  const done=n.time>=s.timeHorizon-1e-9;
+  // Preserve the final physical state rather than showing OFF with a live current.
+  this.patch({...n,preview:n.run==='DELTA'?'delta':s.preview,live:part.live,history,alert:done?`Ολοκλήρωση ${s.timeHorizon} s. Τελικό σημείο και καταγραφή διατηρούνται. Πατήστε STOP για απόζευξη.`:alert});
+  if(done)this.lastTick=t;
  };
  // Scrollable engineering sheet: its world size follows component positions.
  canvasExtent=()=>{const L=this.state.layout;let width=1130,height=825;for(const [key,pos] of Object.entries(L)){if(!boxSpec[key])continue;width=Math.max(width,Math.ceil((pos.x+boxSpec[key].w+190)/30)*30);height=Math.max(height,Math.ceil((pos.y+boxSpec[key].h+165)/30)*30);}return{width:Math.min(12000,width),height:Math.min(12000,height)};};
- getPrediction=()=>{const s=this.state;const key=JSON.stringify([s.timeHorizon,s.params,s.loadPct,s.loadShape,s.vl,s.delay,s.deadTime,s.threshold,s.strategy,s.wires,s.thermal]);if(this.predictionCache?.key===key)return this.predictionCache.data;
-  const removed=starIsDisconnected(s.wires,s.thermal),check=this.audit();if(!check.ready&&!(removed&&check.delta.healthy))return[];
-  let speed=0,run='STAR',switchedAt=0;const pts=[{time:0,run:'OFF',speed:0,current:0,torque:0,load:0}];const step=Math.max(.055,Math.min(.15,s.timeHorizon/1250));
-  for(let t=step;t<=s.timeHorizon+step/2;t+=step){const dt=Math.min(step,s.timeHorizon-(t-step));if(dt<=0)break;const m=integrateMotor(speed,dt,removed&&run==='STAR'?'DEAD':run,s.loadPct,s.vl,s.params,s.loadShape);speed=m.speed;pts.push({time:Math.min(t,s.timeHorizon),run,current:m.current,torque:m.torque,load:m.load,speed});if(run==='STAR'&&(s.strategy==='speed'?speed*100>=s.threshold:t>=s.delay)){run='DEAD';switchedAt=t;}else if(run==='DEAD'&&t-switchedAt>=s.deadTime)run='DELTA';}
-  this.predictionCache={key,data:pts};return pts;
+ getPrediction=()=>{const cfg=this.simulationConfig(),key=JSON.stringify([cfg,this.state.wires,this.state.thermal]);if(this.predictionCache?.key===key)return this.predictionCache.data;
+  const data=this.simulationReady()?predictMotor(cfg,this.state.timeHorizon):[];this.predictionCache={key,data};return data;
  };
+ exportMotor=()=>{const s=this.state,history=s.history.length?s.history:this.getPrediction(),cols=['time','run','speed','rpm','slip','voltagePhase','current','currentPhase','torque','load','friction'];downloadText('YD-LAB-v4.3-motor.csv','time_s,state,n_over_ns,rpm,slip,V_winding_rms,I_line_rms,I_winding_rms,Te_Nm,TL_shaft_Nm,Bomega_Nm\n'+history.map(x=>cols.map(k=>x[k]??0).join(',')).join('\n'),'text/csv;charset=utf-8');};
  // Shared canvas interaction engine. All edits are performed against the same wire graph.
  coords=(scope,e)=>{const svg=this.svgRefs[scope];if(!svg)return{x:0,y:0};
    const ctm=svg.getScreenCTM();if(ctm){const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const local=pt.matrixTransform(ctm.inverse());return{x:local.x,y:local.y};}
@@ -155,13 +159,13 @@ class App extends React.Component {
  suggested=()=>defaultWires(this.state.thermal).find(w=>!this.state.wires.some(x=>keywire(x)===keywire(w)));
  suggestAdd=()=>{const next=this.suggested();if(!next){this.patch({alert:'Όλοι οι 18 αγωγοί του προτύπου υπάρχουν.'});return;}
   this.changeWires([...this.state.wires,{...next}],`Πρόταση συνδεσμολογίας: ${idToReadable(next.a)} → ${idToReadable(next.b)}.`);};
- generateReport=()=>{const a=this.audit();downloadText('yd-lab-workspace.json',JSON.stringify({name:'YD LAB v4.1',saved:new Date().toISOString(),wires:this.state.wires,thermal:this.state.thermal,labels:this.state.labels,layout:this.state.layout,star:{faults:a.star.faults,warnings:a.star.warnings},delta:{faults:a.delta.faults,warnings:a.delta.warnings}},null,2),'application/json')};
- loadReport=e=>{const file=e.target.files?.[0];if(!file)return;const fr=new FileReader();fr.onload=()=>{try{const a=JSON.parse(fr.result);if(!Array.isArray(a.wires))throw Error('Άκυρο αρχείο');this.patch({wires:a.wires,thermal:a.thermal||'line',labels:a.labels||{},layout:a.layout||structuredClone(defaultLayout),run:'OFF',alert:'Το αποθηκευμένο κύκλωμα εισήχθη.'},true);}catch(err){this.patch({alert:'Σφάλμα εισαγωγής: '+err.message});}};fr.readAsText(file);};
+ generateReport=()=>{const a=this.audit();downloadText('yd-lab-workspace.json',JSON.stringify({name:'YD LAB v4.3',saved:new Date().toISOString(),wires:this.state.wires,thermal:this.state.thermal,labels:this.state.labels,layout:this.state.layout,motor:{plate:this.state.plate,vl:this.state.vl,params:this.state.params,startMode:this.state.startMode,loadPct:this.state.loadPct,loadShape:this.state.loadShape,delay:this.state.delay,deadTime:this.state.deadTime,strategy:this.state.strategy,threshold:this.state.threshold,timeHorizon:this.state.timeHorizon,previewSlip:this.state.previewSlip},star:{faults:a.star.faults,warnings:a.star.warnings},delta:{faults:a.delta.faults,warnings:a.delta.warnings}},null,2),'application/json')};
+ loadReport=e=>{const file=e.target.files?.[0];if(!file)return;const fr=new FileReader();fr.onload=()=>{try{const a=JSON.parse(fr.result);if(!Array.isArray(a.wires))throw Error('Άκυρο αρχείο');const m=a.motor||{},valid=m.params&&Object.entries(MOTOR_DEFAULTS).every(([k])=>Number.isFinite(m.params[k]))&&['230/400','400/690'].includes(m.plate)&&['star-delta','star','delta'].includes(m.startMode);this.patch({...(valid?m:{}),wires:a.wires,thermal:a.thermal||'line',labels:a.labels||{},layout:a.layout||structuredClone(defaultLayout),run:'OFF',time:0,speed:0,history:[],bypassStar:false,live:motorSnapshot(0,'OFF',valid?m.loadPct:this.state.loadPct,valid?m.vl:this.state.vl,valid?m.params:this.state.params,valid?m.loadShape:this.state.loadShape,motorRating(valid?m.plate:this.state.plate).delta),alert:'Το αποθηκευμένο κύκλωμα εισήχθη.'},true);}catch(err){this.patch({alert:'Σφάλμα εισαγωγής: '+err.message});}};fr.readAsText(file);};
  navTab=(id,icon,label)=>el('button',{key:id,className:'nav-item '+(this.state.tab===id?'active':''),onClick:()=>this.patch({tab:id})},el('span',{className:'nav-icon'},icon),el('span',null,label));
  badge=(text,variant='')=>el('span',{className:'badge '+variant},text);
  button=(text,fn,extra='',disabled=false)=>el('button',{type:'button',className:'btn '+extra,onClick:fn,disabled},text);
  render(){const s=this.state;const both=this.audit(),active=this.activePreview(),mode=s.run==='DEAD'?'dead':s.run==='OFF'||s.run==='TRIP'?'preview':active;
-  const current=active==='star'?both.star:both.delta;
+  const current=s.run==='DEAD'?analyzeTopology(s.wires,{mode:'dead',vl:s.vl,impedance:motorImpedance(1-s.speed,s.params),thermal:s.thermal}):s.run==='TRIP'?analyzeTopology(s.wires,{mode:active,vl:s.vl,impedance:motorImpedance(1-s.speed,s.params),thermal:s.thermal,supplyOn:false,trip:true}):active==='star'?both.star:both.delta;
   return el('div',{className:'app'},
     el('header',{className:'topbar'},
       el('div',{className:'brand'},el('div',{className:'brand-mark'},'Y','/', 'Δ'),el('div',null,el('div',{className:'brand-title'},'YD LAB',el('span',null,' / CIRCUIT STUDIO')),el('div',{className:'brand-sub'},'ΔΙΑΔΡΑΣΤΙΚΟ ΕΡΓΑΣΤΗΡΙΟ ΑΣΤΕΡΑ – ΤΡΙΓΩΝΟΥ'))),
@@ -170,7 +174,7 @@ class App extends React.Component {
     el('div',{className:'body-grid'},
       el('aside',{className:'sidebar'},
        el('div',{className:'navgroup'},el('div',{className:'side-heading'},'WORKSPACE'),this.navTab('workspace','◈','Schematic editor'),this.navTab('control','⟟','Ρελέ & αυτοματισμός'),this.navTab('dynamics','∿','Κυματομορφές & ροπή'),HAS_RECT?this.navTab('rectifier','◭','Ανορθωτικές διατάξεις'):null,HAS_QUIZ?this.navTab('quiz','▤','Εξάσκηση · 36'):null,this.navTab('help','ⓘ','Οδηγός')),
-       el('div',{className:'sidebar-bottom'},el('div',{className:'help-info'},'ΜΕΛΕΤΗ ΧΩΡΙΣ ΤΑΣΗ',el('p',null,'Οι ηλεκτρικές συνδέσεις προσομοιώνονται. Δεν εκτελείται χειρισμός πραγματικού εξοπλισμού.')),el('div',{className:'build-stamp'},'REACT / SVG ENGINE',el('span',null,'v4.1')))),
+       el('div',{className:'sidebar-bottom'},el('div',{className:'help-info'},'ΜΕΛΕΤΗ ΧΩΡΙΣ ΤΑΣΗ',el('p',null,'Οι ηλεκτρικές συνδέσεις προσομοιώνονται. Δεν εκτελείται χειρισμός πραγματικού εξοπλισμού.')),el('div',{className:'build-stamp'},'REACT / SVG ENGINE',el('span',null,'v4.3')))),
       el('main',{className:'main'},
        s.tab==='workspace'?this.renderWorkspace(both,current,mode):s.tab==='control'?this.renderControl():s.tab==='dynamics'?this.renderDynamics():s.tab==='rectifier'&&HAS_RECT?el(RectifierLab,{questions:HAS_QUIZ?RECT_QUIZ:[]}):s.tab==='quiz'&&HAS_QUIZ?this.renderQuiz():this.renderHelp(),
        el('footer',{className:'footer'},'YD LAB · Η τοπολογία ελέγχεται από γράφο. Η δυναμική κινητήρα χρησιμοποιεί εκπαιδευτικό ισοδύναμο μόνιμης κατάστασης και προσεγγιστική ολοκλήρωση κίνησης.',el('span',null,'offline · GitHub Pages ready')))
@@ -191,7 +195,7 @@ class App extends React.Component {
          this.canvasHeader('02 / EQUIVALENT', 'Συνδέσεις τυλιγμάτων','Καλωδίωσε τις φάσεις, τα τυλίγματα και τους επαφείς','diagram'),
          this.diagramSvg(current),
          el('div',{className:'machine-action-bar'},el('span',null,'● Σύνδεσε δύο κυκλικούς ακροδέκτες με drag ή taps. Πάτησε αγωγό για αλλαγή/διαγραφή. Διασταύρωση χωρίς κοινό κυκλικό port ΔΕΝ αποτελεί ηλεκτρική ένωση.'),this.button('✕ Σβήσε επιλεγμένο καλώδιο',()=>this.removeSelected(),'danger-outline',!s.selectedWire)),
-         this.topologyPreview(current),
+         el('div',{className:'dyn-notice'},s.run==='OFF'?`ΠΡΟΕΠΙΣΚΟΠΗΣΗ ΤΡΟΦΟΔΟΤΗΜΕΝΟΥ ${s.preview==='star'?'Υ':'Δ'} στο s=${s.previewSlip}. Δεν είναι μετρήσεις λειτουργίας με STOP.`:'ΚΑΤΑΣΤΑΣΗ ΚΥΚΛΩΜΑΤΟΣ: '+STATUS_LABEL[s.run]),this.topologyPreview(current),
          el('div',{className:'canvas-bottom'},el('span',null,'Κάθε αλλαγή αποτυπώνεται και στο κύκλωμα ισχύος'),el('span',{className:'shortcut'},'LIVE ENGINE · TWO-WAY')))),
      el('div',{className:'workspace-lower'},
        el('section',{className:'panel editor-controls'},
@@ -201,16 +205,13 @@ class App extends React.Component {
          el('div',{className:'divider'}),el('div',{className:'subhead'},'ΕΠΙΛΕΓΜΕΝΟ ΣΤΟΙΧΕΙΟ'),this.renderInspector()),
        el('section',{className:'panel status-controls'},
          el('div',{className:'subhead'},'ΠΡΟΣΟΜΟΙΩΣΗ / ΕΛΕΓΧΟΣ',this.badge(STATUS_LABEL[s.run],s.run==='DELTA'?'amber':s.run==='STAR'?'teal':'')),
-         el('div',{className:'field-grid'},el('label',null,'Προβολή επαφών',el('div',{className:'segmented'},this.button('Υ',()=>this.patch({preview:'star',run:'OFF'}),s.preview==='star'?'selected':''),this.button('Δ',()=>this.patch({preview:'delta',run:'OFF'}),s.preview==='delta'?'selected':''))),
-           el('label',null,'Θέση θερμικού F3',el('select',{value:s.thermal,onChange:e=>this.changeF3(e.target.value)},el('option',{value:'line'},'Εντός γραμμής'),el('option',{value:'winding'},'Εντός τυλιγμάτων Δ'))),
-           el('label',null,'Τάση γραμμής (V)',el('input',{type:'number',min:100,max:1000,value:s.vl,onChange:e=>this.patch({vl:Math.max(1,Number(e.target.value))})})),
-           el('label',null,'|Ζ| / τύλιγμα (Ω)',el('input',{type:'number',min:1,step:1,value:s.z,onChange:e=>this.patch({z:Math.max(1,Number(e.target.value))})})),
-           el('label',null,'Πινακίδα Δ/Υ',el('select',{value:s.plate,onChange:e=>this.patch({plate:e.target.value})},el('option',{value:'400/690'},'400/690 V'),el('option',{value:'230/400'},'230/400 V'))),
-           el('label',null,'Ονομαστικό Iₙ (A)',el('input',{type:'number',min:1,value:s.inum,onChange:e=>this.patch({inum:Math.max(1,Number(e.target.value))})}))),
-         el('div',{className:'f3-recommend'},el('div',null,el('strong',null,'ΠΡΟΤΑΣΗ ΕΝΑΛΛΑΚΤΙΚΗΣ ΘΕΣΗΣ F3'),el('p',null,s.thermal==='line'?`Τώρα F3 στη γραμμή: ρύθμιση ${fmt(s.inum)} A (Iₙ). Δοκίμασε εντός βρόχου Δ: ρύθμιση ${fmt(s.inum/Math.sqrt(3))} A.`:`Τώρα F3 στον βρόχο Δ: ρύθμιση ${fmt(s.inum/Math.sqrt(3))} A. Δοκίμασε τη θέση στη γραμμή: ${fmt(s.inum)} A.`)),this.button(s.thermal==='line'?'⇄ Μετέφερε F3 στο Δ':'⇄ Μετέφερε F3 στη γραμμή',()=>this.changeF3(s.thermal==='line'?'winding':'line'),'soft')),
+         this.renderMotorSettings(),
+         el('div',{className:'field-grid'},el('label',null,'Προβολή επαφών (με STOP)',el('div',{className:'segmented'},this.button('Υ',()=>{this.stop();this.patch({preview:'star'});},s.preview==='star'?'selected':''),this.button('Δ',()=>{this.stop();this.patch({preview:'delta'});},s.preview==='delta'?'selected':''))),
+           el('label',null,'Θέση θερμικού F3',el('select',{value:s.thermal,onChange:e=>this.changeF3(e.target.value)},el('option',{value:'line'},'Εντός γραμμής'),el('option',{value:'winding'},'Εντός τυλιγμάτων')))),
+         el('div',{className:'f3-recommend'},el('div',null,el('strong',null,'F3 · ΟΝΟΜΑΣΤΙΚΑ ΤΟΥ ΜΟΝΤΕΛΟΥ'),el('p',null,`IΝ,L = ${fmt(this.nominalPoint().currentLine)} A · IΝ,φ = ${fmt(this.nominalPoint().currentPhase)} A. Στη γραμμή: IΝ,L. Στα τυλίγματα: IΝ,φ. Αναφορά στην ονομαστική τελική σύνδεση, όχι στο ρεύμα εκκίνησης.`)),this.button(s.thermal==='line'?'⇄ F3 στα τυλίγματα':'⇄ F3 στη γραμμή',()=>this.changeF3(s.thermal==='line'?'winding':'line'),'soft')),
          el('div',{className:'runbar'},this.button('▶ START',this.start,'start',s.run==='STAR'||s.run==='DEAD'||s.run==='DELTA'),this.button('■ STOP',this.stop,'stop'),this.button('ϟ TRIP',this.trip,'outline')),
-         el('div',{className:'metric-row'},this.metric('V ανά τύλιγμα',`${fmt(current.windingVoltage)} V`),this.metric('I γραμμής',`${fmt(current.lineCurrent)} A`),this.metric('I τυλίγματος',`${fmt(current.windingCurrent)} A`),this.metric('F3 ρύθμιση',`${fmt(s.thermal==='line'?s.inum:s.inum/Math.sqrt(3))} A`)),
-         el('div',{className:'footnote'},'Εναλλακτική θέση F3: στη γραμμή (100% Iₙ), ή μέσα στον βρόχο Δ (~Iₙ/√3 = 0,58 Iₙ). Η αλλαγή επαναφέρει το πρότυπο καλωδίωσης για τη νέα θέση. Οι στατικοί υπολογισμοί του editor χρησιμοποιούν |Z|, οι δυναμικές καμπύλες χρησιμοποιούν χωριστό ισοδύναμο κινητήρα.'),this.button('∿ Προβολή κυματομορφών και ροπής',()=>this.patch({tab:'dynamics'}),'primary'))),
+         el('div',{className:'metric-row'},this.metric('V ανά τύλιγμα',current.faults.length?'—':`${fmt(current.windingVoltage)} V`),this.metric('I γραμμής',current.faults.length?'—':`${fmt(current.lineCurrent)} A`),this.metric('I τυλίγματος',current.faults.length?'—':`${fmt(current.windingCurrent)} A`),this.metric('F3 ρύθμιση',`${fmt(s.thermal==='line'?this.nominalPoint().currentLine:this.nominalPoint().currentPhase)} A`)),
+         el('div',{className:'footnote'},'Το σχέδιο και τα γραφήματα χρησιμοποιούν το ίδιο Zin(s). Σε OFF οι ενδείξεις του σχεδίου είναι προεπισκόπηση τροφοδοτημένης σύνδεσης στο επιλεγμένο s, όχι ζωντανές μετρήσεις. Σε εκκίνηση ενημερώνονται από την πραγματική ολίσθηση.'),this.button('∿ Προβολή κυματομορφών και ροπής',()=>this.patch({tab:'dynamics'}),'primary'))),
        el('section',{className:'panel diagnostics'},el('div',{className:'subhead'},'DIAGNOSTIC ENGINE',this.badge(both.ready?'PASS':starIsDisconnected(s.wires,s.thermal)&&both.delta.healthy?'Δ ΜΟΝΟ':'FAULT',both.ready?'teal':starIsDisconnected(s.wires,s.thermal)&&both.delta.healthy?'amber':'red')),
          el('div',{className:'diagnostics-grid'},this.diagnosticItem('ΑΣΤΕΡΑΣ',both.star),this.diagnosticItem('ΤΡΙΓΩΝΟ',both.delta)),
          el('div',{className:'diag-message '+(both.ready?'success':'warning')},s.alert),
@@ -330,7 +331,7 @@ class App extends React.Component {
      el('rect',{x:348,y:y-43,width:245,height:86,rx:13,fill:'#10243a',stroke:'#37526a',strokeWidth:1.7}),
      el('path',{d:coilPath(363,567,y),fill:'none',stroke:MACHINE_COLORS[n.toLowerCase()],strokeWidth:3.9,strokeLinecap:'round',strokeLinejoin:'round'}),
      el('text',{x:470,y:y-26,textAnchor:'middle',className:'coil-tag'},`ΤΥΛΙΓΜΑ ${n}  ·  ${a} → ${b}`),
-     el('text',{x:470,y:y+35,textAnchor:'middle',className:'coil-reading'},`${fmt(data.voltage,1)} V  |  ${fmt(data.current,1)} A`),
+     el('text',{x:470,y:y+35,textAnchor:'middle',className:'coil-reading'},result.faults.length?'— V | — A':`${fmt(data.voltage,1)} V  |  ${fmt(data.current,1)} A`),
      el('line',{x1:310,y1:y,x2:348,y2:y,stroke:MACHINE_COLORS[n.toLowerCase()],strokeWidth:3.5}),
      el('line',{x1:593,y1:y,x2:635,y2:y,stroke:MACHINE_COLORS[n.toLowerCase()],strokeWidth:3.5}));});
   const starmates=ENDS.every(t=>result.same('M.U2','M.'+t));
@@ -370,10 +371,11 @@ class App extends React.Component {
     ...Object.entries(delta).map(([id,pt])=>terminal(id,pt,'delta')),
     ...Object.entries(star).map(([id,pt])=>terminal(id,pt,'bottom')),
     ...Object.entries(p).map(([id,pt])=>terminal(id,pt,'motor')),
-    el('text',{x:33,y:767,className:'machine-footer'},`ΠΡΟΒΟΛΗ: ${result.mode==='star'?'ΑΣΤΕΡΑΣ Υ · ΚΛΕΙΣΤΟΣ K3M':'ΤΡΙΓΩΝΟ Δ · ΚΛΕΙΣΤΟΣ K2M'}  |  ${connectedLeads.length} ΟΡΑΤΟΙ ΑΓΩΓΟΙ  |  ${result.healthy?'ΚΟΜΒΟΙ ΕΓΚΥΡΟΙ':'ΑΝΙΧΝΕΥΣΗ ΣΦΑΛΜΑΤΟΣ'}`),
+    el('text',{x:33,y:767,className:'machine-footer'},`ΠΡΟΒΟΛΗ: ${result.mode==='dead'?'ΝΕΚΡΟΣ ΧΡΟΝΟΣ':result.mode==='star'?'ΑΣΤΕΡΑΣ Υ · ΚΛΕΙΣΤΟΣ K3M':'ΤΡΙΓΩΝΟ Δ · ΚΛΕΙΣΤΟΣ K2M'}  |  ${connectedLeads.length} ΟΡΑΤΟΙ ΑΓΩΓΟΙ  |  ${result.healthy?'ΚΟΜΒΟΙ ΕΓΚΥΡΟΙ':'ΑΝΙΧΝΕΥΣΗ ΣΦΑΛΜΑΤΟΣ'}`),
     dragLine);
  }
  topologyPreview(result){
+  if(this.state.run==='DEAD'||this.state.run==='TRIP')return el('section',{className:'topology-preview'},el('strong',null,this.state.run==='DEAD'?'ΝΕΚΡΟΣ ΧΡΟΝΟΣ · K2M και K3M ανοικτοί':'ΑΠΟΖΕΥΞΗ · κινητήρας εκτός τροφοδοσίας'),el('p',{className:'dyn-small'},'I γραμμής = I τυλίγματος = 0 A · Te=0. Δεν εμφανίζεται ενεργό ισοδύναμο Υ ή Δ.'));
   const healthy=result.healthy,star=result.mode==='star',tone=healthy?'#73e1b7':'#ff8295';
   const netText=(t)=>{const net=result.netOf(t);return {name:this.state.netLabels[netKey(net)]||net?.phases?.join('/')||net?.id||'—',members:(net?.members||[]).filter(x=>x.startsWith('M.')).map(x=>x.replace('M.','')).join(' · ')||'κανένας'};};
   const endpoints=star?['M.U2','M.V2','M.W2']:PHASES;
@@ -412,41 +414,44 @@ class App extends React.Component {
    el('div',{className:'preview-nodes'},...endpoints.map((t,i)=>{const net=netText(t);return el('div',{key:t,className:'preview-node'},el('small',null,star?['U2','V2','W2'][i]:t),el('strong',null,net.name),el('span',null,net.members));})),
    el('p',{className:'preview-disclaimer'},'Η αναγωγή Υ/Δ εξηγεί την κατάσταση που επέλεξες. Η πραγματική συνδεσιμότητα και η διάγνωση προκύπτουν από τους αγωγούς· το σχεδιασμένο σύμβολο δεν αποτελεί απόδειξη ασφάλειας σε πραγματική εγκατάσταση.'));
  }
+ renderMotorSettings(){
+  const s=this.state,scenario=motorScenario(this.simulationConfig()),running=['STAR','DEAD','DELTA'].includes(s.run),slip=running?1-s.speed:s.previewSlip,z=motorImpedance(slip,s.params);
+  return el('div',{className:'motor-settings'},el('div',{className:'field-grid'},
+    el('label',null,'Πινακίδα Δ/Υ',el('select',{value:s.plate,onChange:e=>this.changePlate(e.target.value)},el('option',{value:'400/690'},'400/690 V'),el('option',{value:'230/400'},'230/400 V'))),
+    el('label',null,'Πολική τάση δικτύου VLL (V)',el('input',{type:'number',min:1,max:1000,step:1,value:s.vl,onChange:e=>this.patch({vl:Math.max(1,Math.min(1000,Number(e.target.value)||1))})})),
+    el('label',null,'Μέθοδος εκκίνησης / τελική σύνδεση',el('select',{value:s.startMode,onChange:e=>this.patch({startMode:e.target.value})},el('option',{value:'star-delta'},'Υ → Δ'),el('option',{value:'star'},'Απευθείας / μόνιμο Υ'),el('option',{value:'delta'},'Απευθείας Δ'))),
+    el('label',null,'s προεπισκόπησης σχεδίου (1=εκκίνηση)',el('input',{type:'number',min:0,max:1,step:.001,value:running?Number(slip.toFixed(4)):s.previewSlip,disabled:running,onChange:e=>this.patch({previewSlip:Math.max(0,Math.min(1,Number(e.target.value)))})}))),
+    el('div',{className:'dyn-notice '+(!scenario.allowed?'danger':'')},scenario.message),
+    el('p',{className:'dyn-small'},`|Zin(s=${slip.toFixed(3)})| = ${Math.hypot(z.r,z.i).toFixed(3)} Ω ανά τύλιγμα · Re=${z.r.toFixed(3)} Ω · Im=${z.i.toFixed(3)} Ω. Κοινό ισοδύναμο για σχέδιο και γραφήματα. `,this.button('Παράμετροι και εξήγηση Z',()=>{this.patch({tab:'dynamics'});requestAnimationFrame(()=>document.getElementById('motor-parameters')?.scrollIntoView({behavior:'smooth',block:'start'}));},'quiet')));
+ }
  renderDynamics(){
   const s=this.state,p=s.params,model=s.live;
   const slip=1-s.speed,starRemoved=starIsDisconnected(s.wires,s.thermal);
-  const rated=ratedLoadTorque(s.vl,p),syncRpm=120*p.f/p.poles;
+  const cfg=this.simulationConfig(),scenario=motorScenario(cfg),rating=motorRating(s.plate);
+  const rated=ratedLoadTorque(rating.delta,p),syncRpm=120*p.f/p.poles;
   const currentMode=s.run==='STAR'?'star':'delta';
-  const simPoint=motorPoint(slip,currentMode,s.vl,p);
-  const chartPhase=(s.bypassStar&&s.run==='STAR')?'OFF':s.run;
-  const history=s.history.length>1?s.history:this.getPrediction();
-  const historySeries=(key)=>history.length>1?history.map(x=>[x.time,x[key]]):[[0,0],[s.timeHorizon,0]];
-  const maxT=s.timeHorizon;
-  const waveformView=(view)=>{const source=history;let ptr=0;const at=(t)=>{while(ptr+1<source.length&&source[ptr+1].time<t)ptr++;const a=source[ptr]||{time:0,speed:0,run:'OFF',current:0},b=source[Math.min(ptr+1,source.length-1)]||a;const k=b.time>a.time?Math.max(0,Math.min(1,(t-a.time)/(b.time-a.time))):0;return{speed:a.speed+(b.speed-a.speed)*k,phase:a.run,current:Math.max(0,a.current+(b.current-a.current)*k)};};
-   const a=Math.max(0,view.x0),b=Math.min(s.timeHorizon,view.x1),span=Math.max(.0005,b-a);if(b<=a)return[];
-   if(span>2.8){const n=Math.min(950,Math.max(220,Math.ceil(span*16)));const positive=[],negative=[],rms=[];for(let j=0;j<=n;j++){const t=a+(b-a)*j/n,x=at(t),v=Math.SQRT2*x.current;positive.push([t,v]);negative.push([t,-v]);rms.push([t,x.current]);}return[{name:'+Peak',color:'#ffb980',points:positive,width:1.9},{name:'−Peak',color:'#65cbe9',points:negative,width:1.9},{name:'I RMS',color:'#b6ddff',points:rms,width:2.6}];}
-   const n=Math.min(6500,Math.max(360,Math.ceil(span*p.f*32))),traces=[[],[],[]];for(let j=0;j<=n;j++){const t=a+(b-a)*j/n,x=at(t),running=x.phase==='STAR'||x.phase==='DELTA';const point=motorPoint(1-x.speed,x.phase==='STAR'?'star':'delta',s.vl,p);const amp=running?Math.SQRT2*x.current:0;for(let ph=0;ph<3;ph++)traces[ph].push([t,amp*Math.sin(2*Math.PI*p.f*t-point.phi-ph*2*Math.PI/3)]);}return traces.map((points,i)=>({name:'L'+(i+1),color:colorPhase[i],points,width:1.65}));
-  };
+  const history=s.history.length?s.history:this.getPrediction();
+  const historySeries=key=>history.length?history.map(x=>[x.time,x[key]??0]):[[0,0],[s.timeHorizon,0]];
+  const maxT=s.timeHorizon,waveformView=view=>currentScopeSeries(history,view,cfg,s.currentView);
   const ampBound=Math.max(1,...history.map(x=>x.current||0))*Math.SQRT2*1.17;
-  const tSlip=(mode)=>Array.from({length:201},(_,i)=>{const t=i/200;return [t,motorPoint(Math.max(.0005,t),mode,s.vl,p).torque];});
-  const tD=tSlip('delta'),tY=tSlip('star'),tMax=Math.max(...tD.map(x=>x[1]))*1.12;
-  const z1={r:p.R1,i:p.X1},critical=p.R2/Math.sqrt(p.R1*p.R1+(p.X1+p.X2)*(p.X1+p.X2));
-  const desiredLoad=loadTorque(s.speed*4*Math.PI*p.f/p.poles,s.loadPct,s.vl,p,s.loadShape);
-  // Approximate electrical rotor/stator envelope time constant at current slip;
-  // this is a local equivalent-RL estimate, not an exact switching transient.
-  const tauElectrical=(p.X1+p.X2)/(2*Math.PI*p.f*(p.R1+p.R2/Math.max(.005,slip)));
-  const omegaS=4*Math.PI*p.f/p.poles, ds=.002;
-  const tmid=motorPoint(Math.max(.0005,slip),'delta',s.vl,p).torque;
-  const dTeDomega=(motorPoint(Math.max(.0005,slip-ds),'delta',s.vl,p).torque-motorPoint(Math.min(1,slip+ds),'delta',s.vl,p).torque)/(2*ds*omegaS);
-  const tauMechanical= dTeDomega<0?p.J/Math.abs(dTeDomega-p.viscous):null;
-
+  const tSlip=mode=>Array.from({length:201},(_,i)=>[i/200,motorPoint(i/200,mode,s.vl,p).torque]);
+  const tD=tSlip('delta'),tY=tSlip('star'),omegaS=4*Math.PI*p.f/p.poles;
+  const loadCurve=Array.from({length:201},(_,i)=>{const sl=i/200,w=(1-sl)*omegaS;return [sl,loadTorque(w,s.loadPct,rating.delta,p,s.loadShape)+p.viscous*w];});
+  const tMax=Math.max(1,...tD.map(x=>x[1]),...loadCurve.map(x=>x[1]))*1.12;
+  const zth=motorPoint(1,'delta',s.vl,p).zth,critical=p.R2/Math.hypot(zth.r,zth.i+p.X2);
+  const tauElectrical=(p.X1+p.X2)/(2*Math.PI*p.f*(p.R1+p.R2/Math.max(.00001,slip)));
+  const netTorque=sl=>motorPoint(sl,currentMode,s.vl,p).torque-loadTorque((1-sl)*omegaS,s.loadPct,rating.delta,p,s.loadShape)-p.viscous*(1-sl)*omegaS;
+  const low=Math.max(0,slip-.002),high=Math.min(1,slip+.002),dNetDomega=(netTorque(low)-netTorque(high))/((high-low)*omegaS);
+  const tauMechanical=['STAR','DELTA'].includes(s.run)&&!(s.bypassStar&&s.run==='STAR')&&dNetDomega<0?p.J/-dNetDomega:null;
+  const iSlip=mode=>Array.from({length:201},(_,i)=>{const sl=i/200,m=motorPoint(sl,mode,s.vl,p);return {sl,...m};});
+  const yPoints=iSlip('star'),dPoints=iSlip('delta');
   const kv=(name,value,meta)=>el('div',{className:'dyn-kpi'},el('small',null,name),el('strong',null,value),el('span',null,meta));
   const hint=(title,text)=>el('div',{className:'simulation-hint'},el('strong',null,title),el('span',null,text));
   return el('div',{className:'content-page dynamics'},
    el('div',{className:'page-head'},el('div',null,el('div',{className:'eyebrow'},'MOTOR SIMULATION / 03'),el('h1',null,'Κυματομορφές εκκίνησης & καμπύλη ροπής'),el('p',null,'Εκπαιδευτικό ισοδύναμο ασύγχρονου κινητήρα: το φορτίο καθορίζει την επιτάχυνση, η ολίσθηση επηρεάζει τη ροπή και το ρεύμα.')),
     el('div',{className:'head-pills'},this.badge('THEVENIN MODEL','teal'),this.badge('APPROX. TRANSIENTS','amber'))),
    el('section',{className:'panel dyn-settings'},
-     el('div',{className:'subhead'},'1 / ΠΑΡΑΜΕΤΡΟΙ ΔΟΚΙΜΗΣ',this.badge(STATUS_LABEL[s.run],s.run==='STAR'?'teal':s.run==='DELTA'?'amber':'')),
+     el('div',{className:'subhead'},'1 / ΠΑΡΑΜΕΤΡΟΙ ΔΟΚΙΜΗΣ',this.badge(STATUS_LABEL[s.run],s.run==='STAR'?'teal':s.run==='DELTA'?'amber':'')),this.renderMotorSettings(),
      el('div',{className:'dyn-setup-grid'},
        el('div',{className:'dyn-load-slider'},el('label',null,'ΦΟΡΤΙΟ ΑΞΟΝΑ — ',el('strong',null,`${s.loadPct}%`)),el('input',{type:'range',min:0,max:100,step:1,value:s.loadPct,onChange:e=>this.patch({loadPct:+e.target.value})}),el('div',{className:'range-ends'},el('span',null,'0% · χωρίς εξωτερικό φορτίο'),el('span',null,'100% · ονομαστικό φορτίο'))),
        el('label',null,'Μοντέλο φορτίου',el('select',{value:s.loadShape,onChange:e=>this.patch({loadShape:e.target.value})},el('option',{value:'constant'},'Σταθερή ροπή'),el('option',{value:'fan'},'Ανεμιστήρας ~ n²'))),
@@ -454,18 +459,30 @@ class App extends React.Component {
        el('label',null,'Κριτήριο μεταγωγής',el('select',{value:s.strategy,onChange:e=>this.patch({strategy:e.target.value,run:'OFF',bypassStar:false},true)},el('option',{value:'mounted'},'Μηχανικό χρονικό K3M'),el('option',{value:'independent'},'Ανεξάρτητο KT1'),el('option',{value:'speed'},'Με βάση την ταχύτητα'))),
        el('label',null,'Όριο ταχύτητας (%)',el('input',{type:'number',min:40,max:95,value:s.threshold,onChange:e=>this.patch({threshold:Math.max(40,Math.min(95,+e.target.value||85))})})),el('label',null,'Διάρκεια ανάλυσης (s)',el('input',{type:'number',min:5,max:600,step:5,inputMode:'numeric',value:s.timeHorizon,onChange:e=>this.patch({timeHorizon:Math.max(5,Math.min(600,Math.round(Number(e.target.value)||60)))})})),el('label',null,'Ταχύτητα εκτέλεσης',el('select',{value:s.simRate,onChange:e=>this.patch({simRate:+e.target.value})},...[1,2,5,10].map(x=>el('option',{key:x,value:x},x+'×'))))
      ),
-     el('div',{className:'dyn-actions'},this.button('✳ AUTO: Κανονικό Υ/Δ',()=>this.autoBuild(),'soft'),this.button('✂ Αφαίρεσε τα 3 καλώδια Υ',()=>this.autoBuild('without-star'),'outline'),this.button('⟟ Δες τα καλώδια',()=>this.patch({tab:'workspace',preview:'star'}),'outline'),this.button('▶ START',this.start,'start',['STAR','DEAD','DELTA'].includes(s.run)),this.button('■ STOP',this.stop,'stop')),
+     el('div',{className:'dyn-actions'},this.button('✳ AUTO: Κανονικό Υ/Δ',()=>this.autoBuild(),'soft'),this.button('✂ Αφαίρεσε τα 3 καλώδια Υ',()=>this.autoBuild('without-star'),'outline'),this.button('⟟ Δες τα καλώδια',()=>this.patch({tab:'workspace',preview:'star'}),'outline'),this.button('▶ START',this.start,'start',['STAR','DEAD','DELTA'].includes(s.run)),this.button('■ STOP',this.stop,'stop'),this.button('↓ CSV κινητήρα',this.exportMotor,'outline')),
      starRemoved?el('div',{className:'dyn-notice danger'},'ΔΟΚΙΜΗ ΧΩΡΙΣ Υ: ο K3M οπλίζει, όμως τα U2/V2/W2 δεν ενώνονται στην πραγματική καλωδίωση. Η μηχανή μένει ακίνητη μέχρι να οπλίσει ο K2M. Αυτό είναι καθυστερημένη απευθείας εκκίνηση Δ, όχι ομαλή εκκίνηση Υ/Δ.'):el('div',{className:'dyn-notice'},'Ο K3M βραχυκυκλώνει (συνδέει στον ίδιο κόμβο) τα U2, V2, W2 όταν οπλίσει. Ο K2M και ο K3M δεν επιτρέπεται να είναι ταυτόχρονα κλειστοί.'),
-     el('div',{className:'dyn-kpis'},kv('Ταχύτητα',`${(s.speed*syncRpm).toFixed(0)} rpm`,`${(100*s.speed).toFixed(1)}% της σύγχρονης`),kv('Ολίσθηση',`${(slip*100).toFixed(1)}%`,'s = (nₛ−n)/nₛ'),kv('Ηλ/μαγνητική ροπή',`${(model.torque||0).toFixed(1)} N·m`,'Te(s)'),kv('Ροπή φορτίου',`${(model.load||0).toFixed(1)} N·m`,s.loadShape==='fan'?'T ∝ n²':'T ≈ σταθερή'),kv('Ρεύμα γραμμής',`${(model.current||0).toFixed(1)} A`,'RMS · προσεγγιστικό'),kv('Χρόνος',`${s.time.toFixed(1)} / ${s.timeHorizon} s`,'STAR / DEAD / DELTA')),
+     el('div',{className:'dyn-kpis'},kv('Ταχύτητα',`${(s.speed*syncRpm).toFixed(0)} rpm`,`${(100*s.speed).toFixed(1)}% της σύγχρονης`),kv('Ολίσθηση',`${(slip*100).toFixed(1)}%`,'s = (nₛ−n)/nₛ'),kv('Ηλ/μαγνητική ροπή',`${(model.torque||0).toFixed(1)} N·m`,'Te(s)'),kv('Ροπή φορτίου',`${(model.load||0).toFixed(1)} N·m`,s.loadShape==='fan'?'T ∝ n²':'T ≈ σταθερή'),kv('Ρεύμα γραμμής IL',`${(model.current||0).toFixed(1)} A`,'RMS'),kv('Ρεύμα τυλίγματος Iφ',`${(model.currentPhase||0).toFixed(1)} A`,s.run==='STAR'?'Υ: IL = Iφ':'Δ: IL = √3·Iφ'),kv('Τάση τυλίγματος',`${(model.voltagePhase||0).toFixed(1)} V`,'Υ: VLL/√3 · Δ: VLL'),kv('Απώλειες Bω',`${(model.friction||0).toFixed(1)} N·m`,'ξεχωριστά από το φορτίο άξονα'),kv('Χρόνος',`${s.time.toFixed(1)} / ${s.timeHorizon} s`,'STAR / DEAD / DELTA')),
      el('div',{className:'dyn-notice'},s.alert)
    ),
    el('div',{className:'dyn-charts'},
-    el('section',{className:'panel'},el('div',{className:'scope-constants'},el('strong',null,'Εκτίμηση σταθερών χρόνου περιβάλλουσας: '),el('span',null,'τₑ ≈ '+(tauElectrical*1000).toFixed(2)+' ms'),el('span',null,'τₘ,local ≈ '+(tauMechanical?tauMechanical.toFixed(2)+' s':'— (μη ευσταθής περιοχή)')),el('small',null,'Προσεγγίσεις: τₑ=L_eq/R_eq, τₘ από τοπική γραμμικοποίηση ροπής. Όχι μετρούμενες πραγματικές ηλεκτρομαγνητικές σταθερές.')),el('div',{className:'subhead'},'2 / ΤΡΙΦΑΣΙΚΑ ΡΕΥΜΑΤΑ i(t)'),el('p',{className:'dyn-small'},'Προεπιλεγμένο διάστημα 0–60 s (αλλαγή από τις ρυθμίσεις). Σε ευρεία προβολή απεικονίζονται RMS και οι δύο περιβάλλουσες ±√2·Iᵣₘₛ· με X+ εμφανίζονται αυτόματα τα στιγμιαία φασικά ημιτονοειδή. Πρόκειται για ενδεικτικό φασορικό μοντέλο χωρίς DC offset, κορεσμό και ηλεκτρομαγνητική μεταβατική ροή.'),chartSvg([{name:'I RMS',color:'#b6ddff',points:historySeries('current')}],{title:'iL1 / iL2 / iL3 [A] · adaptive oscilloscope',xMin:0,xMax:s.timeHorizon,minY:-ampBound,maxY:ampBound,xLabel:'t [s]',viewSeries:waveformView,digits:0}),el('div',{className:'chart-legend'},...[0,1,2].map(i=>el('span',{style:{color:colorPhase[i]},key:i},`● L${i+1}`)))),
-    el('section',{className:'panel'},el('div',{className:'subhead'},'3 / ΕΚΚΙΝΗΣΗ: ΡΕΥΜΑ, ΡΟΠΗ, ΤΑΧΥΤΗΤΑ'),el('p',{className:'dyn-small'},'Κυματομορφές περιβάλλουσας (RMS/μέση ροπή), από την εξίσωση κίνησης J·dω/dt = Te − TL − Bω.'),chartSvg([{name:'I rms',color:'#62c6e9',points:historySeries('current')}],{title:'Ρεύμα γραμμής [A rms]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'Te',color:'#ffb66c',points:historySeries('torque')},{name:'Tload',color:'#e889cb',points:historySeries('load')}],{title:'Ηλεκτρομαγνητική ροπή / ροπή φορτίου [N·m]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'n/nₛ',color:'#72e6bd',points:historySeries('speed').map(([t,z])=>[t,100*z])}],{title:'Στροφές ως % της σύγχρονης',xMin:0,xMax:maxT,minY:0,maxY:100,xLabel:'t [s]',digits:0})),
-    el('section',{className:'panel'},el('div',{className:'subhead'},'4 / ΧΑΡΑΚΤΗΡΙΣΤΙΚΗ ΡΟΠΗΣ–ΟΛΙΣΘΗΣΗΣ'),chartSvg([{name:'Δ',color:'#ffbd78',points:tD},{name:'Υ',color:'#72e7c7',points:tY},{name:'T φορτίου',color:'#e18fc9',points:[[0,desiredLoad],[1,desiredLoad]]},{name:'σημείο',color:'#fff3bd',points:[[slip,0],[slip,tMax]]}],{title:'Te (s) και ενδεικτική TL [N·m]',xMin:0,xMax:1,minY:0,maxY:tMax,xLabel:'ολίσθηση s',digits:0}),
-      el('div',{className:'chart-legend'},el('span',{style:{color:'#ffbd78'}},'● Δ'),el('span',{style:{color:'#72e7c7'}},'● Υ ≈ TeΔ/3'),el('span',{style:{color:'#e18fc9'}},'● φορτίο'),el('span',{style:{color:'#fff3bd'}},'● τρέχουσα s')),
-      hint('Περιοχές λειτουργίας',`Μηδενική ολίσθηση s≈0: n≈nₛ, η ροπή τείνει σε μικρή τιμή. Μέγιστη ροπή γύρω από s≈${critical.toFixed(2)} (προσεγγιστικά). Η κανονική κινητήρια ευσταθής περιοχή βρίσκεται κατά κανόνα στο μικρό s, αριστερά του μέγιστου. Στο s=1 ο δρομέας είναι ακίνητος. Αν Te<TL η μηχανή επιβραδύνεται ή δεν εκκινεί.`)),
-    el('section',{className:'panel'},el('div',{className:'subhead'},'5 / ΙΣΟΔΥΝΑΜΟ ΚΥΚΛΩΜΑ ΑΝΑ ΦΑΣΗ'),
+    el('section',{className:'panel'},el('div',{className:'scope-constants'},el('strong',null,'Εκτιμήσεις τοπικών σταθερών χρόνου: '),el('span',null,'τₑ,series ≈ '+(tauElectrical*1000).toFixed(2)+' ms'),el('span',null,'τₘ,local ≈ '+(tauMechanical?tauMechanical.toFixed(2)+' s':'—')),el('small',null,'τₑ: προσεγγιστικό L/R χωρίς Xm. τₘ: τοπική παράγωγος Te−TL−Bω της ενεργής σύνδεσης. Δεν χρησιμοποιούνται ως πρόσθετα φίλτρα ρευμάτων.')),
+     el('div',{className:'subhead'},'2 / ΡΕΥΜΑΤΑ ΓΡΑΜΜΗΣ ΚΑΙ ΤΥΛΙΓΜΑΤΩΝ'),
+     el('p',{className:'dyn-small'},'Στον Υ οι δύο καμπύλες συμπίπτουν: IL=Iφ. Στον Δ: IL=√3·Iφ και διαφορά φάσης 30°. Συνεχής γραμμή: τροφοδοσία, διακεκομμένη: τύλιγμα. Με X+ φαίνονται τα στιγμιαία ημιτονοειδή· στην επισκόπηση RMS και ±peak.'),
+     el('div',{className:'dyn-actions'},...[['both','Γραμμής + τυλιγμάτων'],['line','Μόνο γραμμής'],['phase','Μόνο τυλιγμάτων']].map(([value,label])=>this.button(label,()=>this.patch({currentView:value}),s.currentView===value?'primary':'outline'))),
+     chartSvg([{name:'IL RMS',color:'#62c6e9',points:historySeries('current')},{name:'Iφ RMS',color:'#ffc278',dash:'7 5',points:historySeries('currentPhase')}],{title:'iL1/L2/L3 και iφU/V/W [A]',xMin:0,xMax:s.timeHorizon,minY:-ampBound,maxY:ampBound,xLabel:'t [s]',viewSeries:waveformView,digits:0}),
+     el('p',{className:'dyn-small'},s.history.length?'Καταγραφή εκτέλεσης: εμφανίζονται μόνο τα διαθέσιμα δείγματα.':'Προεπισκόπηση εκκίνησης με τις επιλεγμένες ρυθμίσεις. '+(!history.length?'Δεν υπάρχει έγκυρο σενάριο για προσομοίωση.':''))),
+    el('section',{className:'panel'},el('div',{className:'subhead'},'3 / ΕΚΚΙΝΗΣΗ: ΡΕΥΜΑ, ΡΟΠΗ, ΤΑΧΥΤΗΤΑ'),el('p',{className:'dyn-small'},'Κυματομορφές περιβάλλουσας (RMS/μέση ροπή), από την εξίσωση κίνησης J·dω/dt = Te − TL − Bω.'),chartSvg([{name:'IL rms',color:'#62c6e9',width:3,points:historySeries('current')},{name:'Iφ rms',color:'#ffc278',width:2,dash:'7 5',points:historySeries('currentPhase')}],{title:'Ρεύμα γραμμής και τυλίγματος [A rms]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'Te',color:'#ffb66c',points:historySeries('torque')},{name:'TL άξονα',color:'#e889cb',points:historySeries('load')},{name:'Bω',color:'#95cbe4',dash:'5 4',points:historySeries('friction')}],{title:'Ηλεκτρομαγνητική ροπή / ροπή φορτίου [N·m]',xMin:0,xMax:maxT,xLabel:'t [s]',digits:0}),chartSvg([{name:'n/nₛ',color:'#72e6bd',points:historySeries('speed').map(([t,z])=>[t,100*z])}],{title:'Στροφές ως % της σύγχρονης',xMin:0,xMax:maxT,minY:0,maxY:100,xLabel:'t [s]',digits:0})),
+    el('section',{className:'panel'},el('div',{className:'subhead'},'4 / ΧΑΡΑΚΤΗΡΙΣΤΙΚΗ ΡΟΠΗΣ–ΟΛΙΣΘΗΣΗΣ'),chartSvg([{name:'Δ'+(s.vl>rating.delta*1.02?' (υπέρταση · θεωρία)':''),color:'#ffbd78',points:tD},{name:'Υ',color:'#72e7c7',points:tY},{name:'TL + Bω',color:'#e18fc9',points:loadCurve},{name:'σημείο',color:'#fff3bd',points:[[slip,0],[slip,tMax]]}],{title:'Te(s) και συνολική αντιρροπή TL+Bω [N·m]',xMin:0,xMax:1,minY:0,maxY:tMax,xLabel:'ολίσθηση s',digits:0}),
+      el('div',{className:'chart-legend'},el('span',{style:{color:'#ffbd78'}},'● Δ'),el('span',{style:{color:'#72e7c7'}},'● Υ = TeΔ/3 (ίδιο s, VLL)'),el('span',{style:{color:'#e18fc9'}},'● TL+Bω'),el('span',{style:{color:'#fff3bd'}},'● τρέχουσα s')),
+      hint('Περιοχές λειτουργίας',`Στο s=0: n=nₛ, Te=0 και παραμένει μόνο ρεύμα μαγνήτισης. Μέγιστη ροπή γύρω από s≈${critical.toFixed(2)} (προσεγγιστικά). Η κανονική κινητήρια ευσταθής περιοχή βρίσκεται κατά κανόνα στο μικρό s, αριστερά του μέγιστου. Στο s=1 ο δρομέας είναι ακίνητος. Αν Te<TL+Bω η μηχανή επιβραδύνεται ή δεν εκκινεί. Οι λόγοι Υ/Δ ισχύουν στην ίδια τάση δικτύου και στην ίδια ολίσθηση.`)),
+    el('section',{className:'panel'},el('div',{className:'subhead'},'ΡΕΥΜΑ–ΟΛΙΣΘΗΣΗ · ΙΔΙΑ ΠΟΛΙΚΗ ΤΑΣΗ'),chartSvg([
+      {name:'Υ IL',color:'#62c6e9',width:3.5,points:yPoints.map(x=>[x.sl,x.currentLine])},
+      {name:'Υ Iφ (=IL)',color:'#ffc278',dash:'7 5',width:2,points:yPoints.map(x=>[x.sl,x.currentPhase])},
+      {name:'Δ IL'+(s.vl>rating.delta*1.02?' (υπέρταση)':''),color:'#c29dff',points:dPoints.map(x=>[x.sl,x.currentLine])},
+      {name:'Δ Iφ'+(s.vl>rating.delta*1.02?' (υπέρταση)':''),color:'#ff8caf',dash:'7 5',points:dPoints.map(x=>[x.sl,x.currentPhase])}
+     ],{title:'IL και Iφ σε Υ/Δ [A RMS]',xMin:0,xMax:1,minY:0,xLabel:'ολίσθηση s'}),
+      hint('Σύγκριση στην ίδια ολίσθηση','VφΥ=VLL/√3 · VφΔ=VLL · ILΥ=IφΥ · ILΔ=√3IφΔ · ILΥ/ILΔ=1/3 · IφΥ/IφΔ=1/√3 · TeΥ/TeΔ=1/3. Στο χρονικό διάγραμμα η ολίσθηση μεταβάλλεται, οπότε δεν συγκρίνουμε αυθαίρετα διαφορετικές χρονικές στιγμές.')),
+    el('section',{className:'panel',id:'motor-parameters'},el('div',{className:'subhead'},'5 / ΙΣΟΔΥΝΑΜΟ ΚΥΚΛΩΜΑ ΑΝΑ ΦΑΣΗ'),
      el('svg',{className:'motor-equivalent',viewBox:'0 0 820 290',role:'img','aria-label':'Ισοδύναμο κύκλωμα επαγωγικού κινητήρα ανά φάση'},
       el('rect',{width:820,height:290,rx:13,fill:'#0b1b2a'}),
       el('path',{d:'M80 75 H130 M285 75 H395 M395 75 H730 V232 H80 V177 M80 75 V101',stroke:'#8dcef0',strokeWidth:3,fill:'none'}),
@@ -492,24 +509,32 @@ class App extends React.Component {
      ),
      el('div',{className:'dyn-equation'},'Tₑ(s) = 3·|Vth|²·(R₂′/s) / {ωs · [(Rth + R₂′/s)² + (Xth + X₂′)²]}'),
      el('div',{className:'dyn-inputs'},...[
-       ['R1','R₁ (Ω)',.1,10,.05],['X1','X₁ (Ω)',.1,15,.05],['R2','R₂′ (Ω)',.1,10,.05],['X2','X₂′ (Ω)',.1,15,.05],['Xm','Xₘ (Ω)',5,300,1],['J','J (kg·m²)',.1,30,.05]
-     ].map(([k,label,min,max,step])=>el('label',{key:k},label,el('input',{type:'number',min,max,step,value:p[k],onChange:e=>this.patch({params:{...p,[k]:Math.max(min,Math.min(max,+e.target.value||min))},run:'OFF'})})))),
-     el('p',{className:'dyn-small'},`Σύγχρονη ταχύτητα nₛ = 120·f/p = ${syncRpm.toFixed(0)} rpm (${p.poles} πόλοι, ${p.f} Hz). Ονομαστική ροπή αναφοράς στο s=4,5% ≈ ${rated.toFixed(1)} N·m. Οι παράμετροι είναι ενδεικτικές, όχι στοιχεία συγκεκριμένου κινητήρα.`),
-     this.button('↻ Επαναφορά παραμέτρων κινητήρα',()=>this.patch({params:{...MOTOR_DEFAULTS},run:'OFF'}),'outline')
+       ['R1','R₁ / τύλιγμα (Ω)',.001,100,.001],['X1','X₁ / τύλιγμα (Ω)',.001,100,.001],['R2','R₂′ αναγμένη (Ω)',.001,100,.001],['X2','X₂′ αναγμένη (Ω)',.001,100,.001],['Xm','Xₘ μαγνήτισης (Ω)',.01,2000,.01],['J','J κινητήρα + φορτίου (kg·m²)',.01,30,.01],['viscous','B τριβών (N·m·s/rad)',0,5,.001],['ratedSlip','sN ονομαστικής αναφοράς',.001,.3,.001]
+     ].map(([k,label,min,max,step])=>el('label',{key:k},label,el('input',{type:'number',min,max,step,value:Number(p[k].toPrecision(9)),onChange:e=>this.patch({params:{...p,[k]:Math.max(min,Math.min(max,Number(e.target.value)))},run:'OFF'})})))),
+     el('p',{className:'dyn-small'},`Σύγχρονη ταχύτητα nₛ = 120·f/p = ${syncRpm.toFixed(0)} rpm (${p.poles} πόλοι, ${p.f} Hz). Ροπή φορτίου άξονα αναφοράς στο sN=${((p.ratedSlip??RATED_SLIP)*100).toFixed(1)}% και Vφ,N=${rating.delta} V: ${rated.toFixed(1)} N·m, μετά την αφαίρεση BωN. Το 100% μένει σταθερό όταν αλλάζει μόνο η τάση τροφοδοσίας. Οι παράμετροι είναι ενδεικτικές· τα R₂′/X₂′ είναι αναγμένα στον στάτη.`),
+     el('details',{className:'motor-explanation'},el('summary',null,'Τι σημαίνει το Z και πώς επιλέγονται οι παράμετροι;'),
+       el('p',null,'Zin(s) = R₁+jX₁ + [jXₘ ∥ (R₂′/s+jX₂′)]. Είναι η εμπέδηση που βλέπει ΕΝΑ τύλιγμα, όχι ισοδύναμο ολόκληρου τριφασικού. Iφ=Vφ/|Zin(s)|. Το R₂′/s αλλάζει με τις στροφές· δεν εισάγουμε δεύτερο, ανεξάρτητο σταθερό Z για τα σχέδια.'),
+       el('p',null,'Η πινακίδα ορίζει τις ονομαστικές τάσεις σύνδεσης, όχι R/X, ισχύ ή ροπή. Οι προεπιλογές 230/400 και 400/690 είναι εκπαιδευτικές παραλλαγές ίδιας ισχύος: R και X κλιμακώνονται με το τετράγωνο της ονομαστικής τάσης τυλίγματος. Για πραγματικό κινητήρα χρειάζονται στοιχεία ή δοκιμές κενού/ακινητοποιημένου δρομέα.'),
+       el('p',null,'Για γνωστό |Z| σε συγκεκριμένη ολίσθηση μπορείς να κλιμακώσεις ΟΛΑ τα R/X με τον ίδιο συντελεστή. Διατηρείται η γωνία Zin και αλλάζουν συνεπώς ρεύματα, ροπή και ισχύς. Μία τιμή |Z| μόνη της δεν προσδιορίζει μοναδικά ισοδύναμο κινητήρα.'),
+       el('div',{className:'field-grid'},el('label',null,'|Zin| στόχος (Ω)',el('input',{type:'number',min:.01,max:2000,step:.01,value:s.zTarget,onChange:e=>this.patch({zTarget:Math.max(.01,Math.min(2000,Number(e.target.value)||.01))})})),el('label',null,'s αναφοράς για το |Zin|',el('input',{type:'number',min:0,max:1,step:.001,value:s.zRefSlip,onChange:e=>this.patch({zRefSlip:Math.max(0,Math.min(1,Number(e.target.value)))})}))),
+       this.button('Εφάρμοσε |Zin| με κοινή κλιμάκωση R/X',this.applyImpedance,'outline'),
+       el('p',null,`Στην αναφορά s=${s.zRefSlip}: |Zin|=${Math.hypot(...Object.values(motorImpedance(s.zRefSlip,p))).toFixed(3)} Ω. Στην εκκίνηση s=1: ${Math.hypot(...Object.values(motorImpedance(1,p))).toFixed(3)} Ω. Στο sN=0,045: ${Math.hypot(...Object.values(motorImpedance(p.ratedSlip??RATED_SLIP,p))).toFixed(3)} Ω.`),
+       el('p',null,'J: αδράνεια κινητήρα και αναγμένου φορτίου· επηρεάζει την επιτάχυνση, όχι τη στατική καμπύλη Te(s). Bω: ιξώδης αντιρροπή, ξεχωριστή από TL. Φορτίο ανεμιστήρα: TL∝ω², μηδενικό στην ακινησία. Η υπόθεση είναι συμμετρικός κινητήρας, 50 Hz, σταθερές R/X, χωρίς κορεσμό.')),
+     this.button('↻ Επαναφορά παραμέτρων κινητήρα',()=>this.patch({params:motorPreset(s.plate),run:'OFF'}),'outline')
     )
    ),
    el('div',{className:'safety-footer'},'⚠ Οι στιγμιαίες κυματομορφές βασίζονται σε μεταβαλλόμενο πλάτος ημιτονοειδούς, όχι σε πλήρη ηλεκτρομαγνητική επίλυση. Η μέθοδος δεν προβλέπει ακριβείς αιχμές, ρεύματα σφάλματος, θερμική προστασία ή πραγματική συμμόρφωση εγκατάστασης. Μη χρησιμοποιηθεί για διαστασιολόγηση ή εργασία υπό τάση.')
   );
  }
 
- renderControl(){const s=this.state,active=s.run==='STAR'||s.run==='DELTA'||s.run==='DEAD',status={K1M:active,K2M:s.run==='DELTA',K3M:s.run==='STAR',K4M:s.strategy==='mounted'&&(s.run==='DEAD'||s.run==='DELTA'),KT1:s.strategy==='independent'&&active};
+ renderControl(){const s=this.state,active=s.run==='STAR'||s.run==='DELTA'||s.run==='DEAD',status={K1M:active,K2M:s.run==='DELTA',K3M:s.run==='STAR',K4M:s.startMode==='star-delta'&&s.strategy==='mounted'&&(s.run==='DEAD'||s.run==='DELTA'),KT1:s.startMode==='star-delta'&&s.strategy==='independent'&&active};
   const box=(name,contacts,detail)=>el('div',{className:'relay-box',key:name},el('div',{className:'relay-heading'},el('strong',null,name),this.badge(status[name]?'ΟΠΛΙΣΜΕΝΟ':'ΑΝΕΝΕΡΓΟ',status[name]?'teal':'')),el('p',null,detail),el('div',{className:'relay-contact-list'},...contacts.map((c,i)=>el('div',{key:i,className:'contact-row'},el('span',{className:'contact-terminal'},c[0]),el('span',{className:'contact-symbol '+(status[name]?'lit':'')},c[1].startsWith('NO')?'—o/ o—':'—o\\o—'),el('span',{className:'contact-terminal'},c[2]),el('span',{className:'contact-type'},c[3]||c[1])))));
   return el('div',{className:'content-page'},el('div',{className:'page-head'},el('div',null,el('div',{className:'eyebrow'},'CONTROL & INTERLOCK  /  02'),el('h1',null,'Κουτιά ρελέ & χρονισμός'),el('p',null,'Συμπληρωματική απεικόνιση της λογικής ελέγχου. Δεν αποτελεί ακόμη επιλυτή αυθαίρετου ladder circuit.'))),
     el('div',{className:'panel'},el('div',{className:'subhead'},'ΣΤΡΑΤΗΓΙΚΗ ΜΕΤΑΓΩΓΗΣ'),el('div',{className:'strategy-grid'},...[
        ['mounted','Μηχανικό χρονικό K3M','Το μπλοκ χρόνου δεν έχει πηνίο. Ενεργοποιείται μηχανικά από K3M. Το K4M διατηρεί την ολοκλήρωση της μεταγωγής.'],
        ['independent','Ανεξάρτητο χρονικό KT1','Ανεξάρτητο πηνίο A1/A2, με NC/NO χρονικές επαφές.'],
        ['speed','Έλεγχος ταχύτητας','Η εντολή Δ ακολουθεί τη λογική n/nₛ ≥ όριο, με μανδάλωση και νεκρό χρόνο.']].map(([id,title,text])=>el('button',{className:'strategy '+(s.strategy===id?'picked':''),key:id,onClick:()=>this.patch({strategy:id,run:'OFF',time:0,speed:0},true)},el('strong',null,title),el('span',null,text))))),
-    this.renderControlSchematic(),
+    s.startMode==='star-delta'?this.renderControlSchematic():el('div',{className:'dyn-notice'},`Απευθείας ${s.startMode==='star'?'Υ':'Δ'}: με START οπλίζουν K1M και ${s.startMode==='star'?'K3M':'K2M'}. Δεν εκτελείται χρονική μεταγωγή. Οι χρονικές ρυθμίσεις και τα ακόλουθα κουτιά περιγράφουν την εναλλακτική μέθοδο Υ→Δ.`),
     el('div',{className:'workspace-lower'},el('section',{className:'panel'},el('div',{className:'subhead'},'ΡΕΛΕ & ΒΟΗΘΗΤΙΚΕΣ ΕΠΑΦΕΣ'),el('div',{className:'relays-grid'},
        box('K1M',[['13','NO','14'],['21','NC','22']],'Κύριος επαφέας · αυτοσυγκράτηση'),
        box('K2M',[['13','NO','14'],['21','NC','22']],'Δ · ηλεκτρική μανδάλωση με K3M'),
@@ -573,7 +598,7 @@ class App extends React.Component {
  ['10','Ροπή, 60 s και adaptive παλμογράφος','Στην καρτέλα Κυματομορφές η προεπιλογή είναι 0–60 s, με ελεύθερο τέλος χρόνου έως 600 s. Με X+ στο σήμα i(t) περνάς από το RMS/περιβάλλουσα στις λεπτομερείς τρεις ημιτονοειδείς. Ο engine υπολογίζει την επιτάχυνση από J·dω/dt = Te − TL − Bω, αλλά δεν αποτελεί EMT επίλυση.'],
  ['11','Ανορθωτές — FFT και τύποι','Στη δεύτερη άσκηση οι αρμονικές εμφανίζονται ως διακριτά θολωτά φασματικά στοιχεία: x=τάξη ή Hz, y=% I₁ ή % I RMS, επιλέξιμο όριο αρμονικών. Οι τύποι περιλαμβάνουν MathML και κουμπί «Αναλυτική θεωρία +».'],
    ['12','Αποτελέσματα και αρχεία','SVG κάθε όψης και JSON συνδεσμολογίας. '+(HAS_QUIZ?'Η πλήρης έκδοση δίνει και CSV/JSON της εξάσκησης.':'Η δημόσια έκδοση δεν περιλαμβάνει ερωτήσεις.')+' Λειτουργεί τοπικά χωρίς backend.']].map(([number,title,body])=>el('section',{className:'panel help-card',key:number},el('span',{className:'help-number'},number),el('h3',null,title),el('p',null,body)))),
- el('div',{className:'safety-footer'},el('strong',null,'Περιορισμός μοντέλου: '),'Ο editor ελέγχει την τοπολογία και υπολογίζει συμμετρικά ρεύματα με σταθερή εμπέδηση. Η καρτέλα Κυματομορφές χρησιμοποιεί ξεχωριστό εκπαιδευτικό ισοδύναμο ανά φάση, χωρίς πλήρη ηλεκτρομαγνητική μεταβατική επίλυση, πραγματικές καμπύλες θερμικού, βιομηχανικά interlocks ή έλεγχο IEC συμμόρφωσης. Μόνο για εκπαιδευτική χρήση.'));
+ el('div',{className:'safety-footer'},el('strong',null,'Περιορισμός μοντέλου: '),'Σχέδιο και κυματομορφές χρησιμοποιούν κοινό ισοδύναμο κινητήρα Zin(s). Η ροπή υπολογίζεται για συμμετρική σύνδεση και η κίνηση ολοκληρώνεται από Te−TL−Bω, χωρίς πλήρη ηλεκτρομαγνητική μεταβατική επίλυση, πραγματικές καμπύλες θερμικού, βιομηχανικά interlocks ή έλεγχο IEC συμμόρφωσης. Μόνο για εκπαιδευτική χρήση.'));
  }
 }
 ReactDOM.render(h(App),document.getElementById('root'));
